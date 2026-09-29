@@ -76,13 +76,13 @@ def load_cases(path=None):
 TIER_OUTCOMES = ("block", "warn", "silent")
 
 
-def tier_outcome(subagent_type, entry):
+def tier_outcome(subagent_type, entry, model_override=None):
     """What the live hook would DO with this judgement: "block", "warn" or
     "silent". `policy.tier_surface` is the hook's own function; rewrite mode is
     forced off because it is off by default, and the cheapest-rung shortcut is
     applied because `policy.deny_possible_agent` means such a call is never
     even judged."""
-    if not policy.deny_possible_agent(subagent_type):
+    if not policy.deny_possible_agent(subagent_type, model_override):
         return "silent"
     surfaced = policy.tier_surface(entry, rewrite_on=False)
     return surfaced if surfaced in TIER_OUTCOMES else "silent"
@@ -121,6 +121,7 @@ def _judge_tier(payload):
         task_kind_margin=margin,
         states_prior_failed_attempts=prior_failed,
         chosen_type=subagent_type,
+        model_override=model_override,
     )
     entry = policy.tier_entry_fields(verdict, task_kind, confidence, margin,
                                      prior_failed, subagent_type)
@@ -129,7 +130,7 @@ def _judge_tier(payload):
     return {
         "predicted_label": task_kind,
         "predicted_would_deny": verdict["would_deny"],
-        "predicted_outcome": tier_outcome(subagent_type, entry),
+        "predicted_outcome": tier_outcome(subagent_type, entry, model_override),
         "rung_diff": verdict.get("rung_diff"),
         "confidence": confidence,
         "margin": margin,

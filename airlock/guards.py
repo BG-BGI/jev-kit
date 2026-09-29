@@ -30,6 +30,12 @@ def _tier_detail(chosen, adequate, task_kind, note=None):
     )
 
 
+def _cheapest_rung(subagent_type, model_override):
+    if tiers.effective_model(subagent_type, model_override):
+        return tiers.MODEL_LADDER[0]
+    return tiers.rung_names()[0]
+
+
 def _now_iso():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -66,7 +72,7 @@ def compute_tier_entry(data, timeout_s=None):
     }
 
     sampled = False
-    if not policy.deny_possible_agent(subagent_type):
+    if not policy.deny_possible_agent(subagent_type, model_override):
         sampled = random.random() < policy.sample_rate()
         if not sampled:
             entry = dict(entry_base)
@@ -79,7 +85,7 @@ def compute_tier_entry(data, timeout_s=None):
             entry["detail"] = _tier_detail(
                 subagent_type, None, None,
                 note="cheapest rung ('%s'), no deny reachable, not judged"
-                     % tiers.rung_names()[0])
+                     % _cheapest_rung(subagent_type, model_override))
             return entry
 
     state = questions.tier_state(subagent_type, model_override, description, prompt)
@@ -119,6 +125,7 @@ def compute_tier_entry(data, timeout_s=None):
         task_kind_margin=task_kind_margin,
         states_prior_failed_attempts=prior_failed,
         chosen_type=subagent_type,
+        model_override=model_override,
     )
     entry.update(policy.tier_entry_fields(
         verdict, task_kind, task_kind_conf, task_kind_margin,

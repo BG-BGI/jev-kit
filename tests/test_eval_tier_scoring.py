@@ -223,12 +223,14 @@ class TestCasesFileLabels(unittest.TestCase):
         prior_failure_ids = set()
         for c in self.tier:
             chosen = c["payload"]["tool_input"].get("subagent_type") or ""
+            model = c["payload"]["tool_input"].get("model") or ""
+            chosen_model = policy.tiers.effective_model(chosen, model)
             expected = c["expected"]
             outcome = eval_mod.expected_tier_outcome(expected)
-            if not policy.deny_possible_agent(chosen):
+            if not policy.deny_possible_agent(chosen, model):
                 self.assertEqual(outcome, "silent", c["id"])
                 continue
-            if chosen == "fable":
+            if policy.is_fable_dispatch(chosen, chosen_model):
                 # A fable dispatch is a block unless the prompt states a prior
                 # FAILED attempt, in which case it is judged on the rung gap.
                 if outcome == "block":
@@ -238,12 +240,18 @@ class TestCasesFileLabels(unittest.TestCase):
             if task_kind is None:
                 self.assertTrue(expected.get("ambiguous"), c["id"])
                 continue
-            adequate = policy.TASK_KIND_ADEQUATE_RUNG.get(task_kind)
+            if chosen_model:
+                adequate = policy.TASK_KIND_ADEQUATE_MODEL.get(task_kind)
+                index = policy.tiers.model_index()
+                chosen_rung = chosen_model
+            else:
+                adequate = policy.TASK_KIND_ADEQUATE_RUNG.get(task_kind)
+                index = policy.tiers.rung_index()
+                chosen_rung = policy.rung_for_agent_type(chosen)
             if adequate is None:
                 self.assertEqual(outcome, "silent", c["id"])
                 continue
-            index = eval_mod.policy.tiers.rung_index()
-            diff = index[policy.rung_for_agent_type(chosen)] - index[adequate]
+            diff = index[chosen_rung] - index[adequate]
             want = "block" if diff >= 2 else ("warn" if diff == 1 else "silent")
             self.assertEqual(outcome, want, "%s (rung gap %d)" % (c["id"], diff))
         self.assertTrue(prior_failure_ids, "no fable-with-stated-failure case left")

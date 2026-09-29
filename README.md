@@ -288,7 +288,11 @@ flowchart LR
 | `fable` with no prior failed attempt stated | blocked |
 
 The ladder is yours: `~/.config/airlock/tiers.json` overrides the built-in one,
-because agent type names differ per machine. Rewrite mode, which edits the
+because agent type names differ per machine. When the model a dispatch runs on
+is known (a `model` on the call, Explore, or `inherit_model` in `tiers.json`),
+the guard compares models instead, haiku to fable, and names the `model` to set.
+That advice works on a stock install with no custom agents. See
+[docs/rules.md](docs/rules.md#the-model-ladder-judged-by-what-the-call-runs-on). Rewrite mode, which edits the
 dispatch instead of advising, exists and is off by default for a reason set out
 in [docs/rules.md](docs/rules.md#rewrite-mode-off-by-default-and-here-is-the-catch).
 
@@ -307,7 +311,7 @@ Nothing is extrapolated.
 | Deny-capable rule accuracy | **100%**, zero false denies | `python3 -m airlock.eval`, 2026-09-19, on labelled cases per rule (R1 16, R2 8, R3 10, R4 11, R5 9, R6 9, R7 10, R9 9) |
 | `R10-general-risk` accuracy | **95.2%** (20/21), zero false denies | same run, 21 labelled cases. Was 88.9% before the quieting pass. It can only warn, so a false deny is structurally impossible |
 | `R10` pre-filter skip rate | fired on **2 of 284** Bash calls (0.7%); consulted on 0 | the existing shadow log. Every row there is a call a specific rule had already claimed |
-| Tier-guard accuracy | **98.2%** (56 of 57 scored), zero false denies, zero missed denies | `python3 -m airlock.eval`, 2026-09-19, 58 labelled Agent dispatches. Block 18/18, silent 29/29, warn 9/10 |
+| Tier-guard accuracy | **98.6%** (69 of 70 scored), zero false denies, zero missed denies | `python3 -m airlock.eval`, 2026-09-29, 71 labelled Agent dispatches, 13 of them on the model ladder. Block 21/21, silent 36/36, warn 12/13 |
 | `task_kind` calibration | **98.0%** accuracy, ECE 1.9%, over 50 labelled rows | `tuning/calibrate.sh`, 2026-09-19 |
 | `search_intent` calibration | **84.4%** accuracy, ECE 12.6%, over 32 labelled rows | same run. The weaker of the two guards |
 | `subagent_type` ablation | `task_kind` **did not move**, 30/30 across five rungs | `python3 eval/ablation.py`, 2026-09-19. Thirty cases on five prompts is not a general result |
