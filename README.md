@@ -154,6 +154,7 @@ only: no labelled corpus, no measured numbers, no sustained use.
 | Browser agent | Jev decides each click, or a warm planner does with `plan: true`. Vendored at a pin | no, opt-in | Page state and goals, to the decider you configure | own numbers |
 | Review | A Jev code reviewer at a pin, with a fail-open wrapper | no, opt-in | Diffs, to the gate you configure | no numbers here |
 | `decide` MCP tool | Claude asks Jev for calibrated choice, score and yes/no decisions, many per call | no, opt-in | The context and questions Claude sends, redacted | **experimental** |
+| Harness | Jev decides each step of a `make check-agent` fix loop; Claude only writes the edits | no | Failed gate output, redacted, to TypeSafe | **experimental** |
 | Document classifier | Two-stage classifier with an escape hatch and a confidence gate | no | Page text, when you call it | **experimental** |
 | Log triage | Redact-first, local-rules-first triage on stdin | no | Redacted lines, once local rules run out | **experimental** |
 | Shim | An OpenAI-shaped HTTP shim over the `claude` CLI | no, opt-in | Whatever you send through it | **experimental** |
@@ -322,6 +323,7 @@ Nothing is extrapolated.
 | Browser agent, Claude cost per run | **0.0008 USD** with Jev against **0.1868 USD** with Sonnet deciding (goal 1) | same sweep. Cost is the CLI's own `total_cost_usd`, never tokens multiplied by a price |
 | Skill suggest | **28/28** right skill, **0/10** loaded when none fits | `python3 -m suggest.eval`, 2026-09-29, 38 synthetic cases on a 28-skill synthetic roster. Suggester accuracy, not Claude spend |
 | Failure verdict | **0** wrong verdicts said over 13 runs; 8-9 of 13 verdicts right, 4 of 8 that should speak did | `python3 -m airlock.failure_eval`, 2026-09-29, two runs of 13 synthetic failure runs. It errs toward silence |
+| Harness, gate-fix loop | **0.0367 USD** a run with Jev deciding, against 0.0571 (Haiku), 0.0773 (Sonnet) and 0.1557 (Opus) with Claude alone, all green | `python3 -m harness.bench`, 2026-09-29, one seed failing five gates in one repository, n=2 per arm (Opus n=1). 36% of the saving holds on the same model |
 | A/B bench, guard against no guard | **zero denies** over 30 sessions | `bench/results/20260919-120344.md`, 2026-09-19, enforce mode, five tasks |
 
 **Read that last row as a backstop, not a tax.** Thirty sessions of ordinary
