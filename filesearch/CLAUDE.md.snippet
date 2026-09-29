@@ -14,6 +14,11 @@ the last hour may be missing: run
 150 GB disk) and ask again. Inside one repository use `fd`, which walks the
 tree live and needs no index.
 
+On macOS there is no plocate index. Spotlight is the index:
+`mdfind -onlyin <dir> -name '<pattern>' 2>/dev/null`. It skips hidden
+directories (`~/.config`, `.git`), so a search there still needs a bounded
+`find`.
+
 Under WSL, `$HOME` and `/mnt/<drive>` are two different filesystems with two
 different indexes. `plocate` still covers `$HOME` on the Linux side. It never
 covers the Windows host, so a search under `/mnt/c/...` or any other mounted

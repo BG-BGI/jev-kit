@@ -411,7 +411,10 @@ if airlock_is_macos; then
     if [ ! -f "$HOME/Library/LaunchAgents/com.jev-kit.$unit.plist" ]; then
       skip "com.jev-kit.$unit not installed"
     elif line="$("$PY" "$REPO_ROOT/install/launchd.py" status "$unit" 2>/dev/null)"; then
-      pass "$line"
+      case "$unit:$line" in
+        airlock-daemon:*state=running*|airlock-health:*|airlock-tune:*) pass "$line" ;;
+        *) fail "$line -- the daemon is loaded but not running; see ~/Library/Logs/jev-kit/$unit.log" ;;
+      esac
     else
       fail "com.jev-kit.$unit plist present but not loaded (launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jev-kit.$unit.plist)"
     fi

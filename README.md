@@ -12,7 +12,7 @@
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
   <img alt="tests" src="https://img.shields.io/badge/tests-1310%20passing-brightgreen">
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue">
-  <img alt="Platforms" src="https://img.shields.io/badge/platforms-Linux%20%7C%20WSL2%20%7C%20Windows-lightgrey">
+  <img alt="Platforms" src="https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20WSL2%20%7C%20Windows-lightgrey">
   <img alt="Claude Code" src="https://img.shields.io/badge/Claude%20Code-PreToolUse%20hook-8A3FFC">
   <img alt="TypeSafe Jev" src="https://img.shields.io/badge/TypeSafe-Jev-0F9D58">
 </p>
@@ -57,6 +57,9 @@ install/install.sh          # guard + session check + daemon + monitoring
                             # + filesearch + claude-update + belay,
                             # all under $HOME
 ```
+
+**On macOS** the same command works. It writes LaunchAgents instead of
+systemd units; see **[docs/INSTALL-MACOS.md](docs/INSTALL-MACOS.md)**.
 
 **On native Windows without WSL**, that is not the install: the installer is
 Python, not bash. Follow
@@ -359,7 +362,7 @@ Full tables, methods and the known limits: **[docs/measurements.md](docs/measure
 | **Linux** (systemd user session) | Fully supported, and what every measured number here came from. Guard, warm daemon, all timers, `plocate` file search. |
 | **WSL2** (Ubuntu, systemd on) | Supported. Identical to Linux once `systemd=true` is in `/etc/wsl.conf` and the distribution has been restarted. See [INSTALL-WSL.md](docs/INSTALL-WSL.md). |
 | **WSL2** (systemd off) | Works, degraded, and the installer detects it. No daemon (a direct HTTPS call per judgement, roughly 0.9 s instead of 0.3 s), no timers, no hourly index refresh. The guard itself is unaffected. |
-| **macOS** | Plausible but **untested**. The guard is stdlib Python and should run. There is no systemd, so `--no-systemd` is required, and the daemon, all timers and `plocate` are out. `launchd` equivalents are not written. Nobody has run it. |
+| **macOS** | Supported. The same installer writes LaunchAgents instead of systemd units, the daemon socket lives in `~/Library/Caches/airlock`, and file search steers at Spotlight (`mdfind`) instead of `plocate`. Run on macOS 26.6. The Jev-judged path is not yet measured there. See [INSTALL-MACOS.md](docs/INSTALL-MACOS.md). |
 | **Native Windows** (no WSL) | **The core is supported**, and was run on a real Windows 11 machine, including the Jev-judged path with a real key (2026-09-19). Guard in shadow and enforce, the whole rules table, the key file, file search steered at [Everything](https://www.voidtools.com/) (`es.exe`) instead of `plocate`, health check, installer, doctor, uninstaller. **No warm daemon**, and belay, compaction, browser, review and tuning are **not ported**. See [INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md), and [native-windows.md](docs/native-windows.md) for what is done and what remains. |
 
 ### What "supported" means on native Windows
