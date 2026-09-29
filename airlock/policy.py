@@ -70,23 +70,60 @@ def rung_for_agent_type(subagent_type):
     return tiers.rung_for_agent_type(subagent_type)
 
 
-def evaluate_tier(task_kind, task_kind_confidence, states_prior_failed_attempts, chosen_type, task_kind_margin=None):
+# Minimum adequate model per task_kind, for a dispatch judged on
+# tiers.MODEL_LADDER. The same shape as TASK_KIND_ADEQUATE_RUNG: a lookup or
+# mechanical edit is Haiku work, scoped implementation Sonnet, judgement Opus.
+TASK_KIND_ADEQUATE_MODEL = {
+    "lookup": "haiku",
+    "mechanical_edit": "haiku",
+    "scoped_implementation": "sonnet",
+    "judgement": "opus",
+    "hard_problem": "fable",
+}
+
+
+def is_fable_dispatch(chosen_type, chosen_model=None):
+    """True when the dispatch runs on fable. A known model decides it, so a
+    'fable' type sent with model=haiku is not a fable dispatch, and a general
+    type sent with model=fable is."""
+    if chosen_model:
+        return chosen_model == "fable"
+    return chosen_type == "fable"
+
+
+def entry_is_fable(entry):
+    return is_fable_dispatch(entry.get("chosen_type"), entry.get("chosen_model"))
+
+
+def evaluate_tier(task_kind, task_kind_confidence, states_prior_failed_attempts, chosen_type,
+                  task_kind_margin=None, model_override=None):
     """Return the tier-guard verdict for one Agent tool call.
 
     would_deny: chosen rung is strictly higher than the adequate rung for the
     judged task_kind, AND task_kind clears the shared deny bar (confidence
     >= 0.8 AND margin >= 0.4 over the runner-up), AND task_kind != unclear.
-    Also true when chosen_type == "fable" and states_prior_failed_attempts < 0.5
-    (fable dispatched without stating a failed prior attempt) -- that rule
-    uses a Noul answer, which carries no margin, so it is unaffected by the
-    margin gate.
+    Also true when the dispatch runs on fable and states_prior_failed_attempts
+    < 0.5 (fable dispatched without stating a failed prior attempt) -- that
+    rule uses a Noul answer, which carries no margin, so it is unaffected by
+    the margin gate.
 
     under_tiered: chosen rung is strictly lower than adequate -- logged, never
     a deny.
+
+    The rungs compared are models when tiers.effective_model knows the one
+    this dispatch runs on (`ladder: "model"`), else agent types.
     """
-    chosen_rung = rung_for_agent_type(chosen_type)
-    adequate_rung = TASK_KIND_ADEQUATE_RUNG.get(task_kind)
-    index = tiers.rung_index()
+    chosen_model = tiers.effective_model(chosen_type, model_override)
+    if chosen_model:
+        ladder_name = "model"
+        chosen_rung = chosen_model
+        adequate_rung = TASK_KIND_ADEQUATE_MODEL.get(task_kind)
+        index = tiers.model_index()
+    else:
+        ladder_name = "agent"
+        chosen_rung = rung_for_agent_type(chosen_type)
+        adequate_rung = TASK_KIND_ADEQUATE_RUNG.get(task_kind)
+        index = tiers.rung_index()
     if adequate_rung is not None and (chosen_rung not in index or adequate_rung not in index):
         # A machine ladder that does not name this rung at all: no comparison
         # is possible, so nothing is over- or under-tiered. Fail open.
@@ -109,7 +146,7 @@ def evaluate_tier(task_kind, task_kind_confidence, states_prior_failed_attempts,
         elif chosen_idx < adequate_idx:
             under_tiered = True
 
-    if chosen_type == "fable" and (states_prior_failed_attempts or 0.0) < 0.5:
+    if is_fable_dispatch(chosen_type, chosen_model) and (states_prior_failed_attempts or 0.0) < 0.5:
         would_deny = True
 
     return {
@@ -119,6 +156,8 @@ def evaluate_tier(task_kind, task_kind_confidence, states_prior_failed_attempts,
         "under_tiered": under_tiered,
         "suggested_agent": adequate_rung,
         "rung_diff": rung_diff,
+        "ladder": ladder_name,
+        "chosen_model": chosen_model,
     }
 
 
@@ -145,6 +184,8 @@ def tier_entry_fields(verdict, task_kind, task_kind_confidence, margin,
         "task_kind": task_kind,
         "task_kind_confidence": task_kind_confidence,
         "prior_failed": prior_failed,
+        "ladder": verdict.get("ladder", "agent"),
+        "chosen_model": verdict.get("chosen_model"),
     }
 
 
@@ -170,7 +211,7 @@ def enforce_deny_tier(tier_entry):
     failed attempt, OR the chosen rung is at least two rungs above the
     adequate rung for the judged task_kind (same deny bar as would_deny)."""
     entry = tier_entry or {}
-    if entry.get("chosen_type") == "fable" and (entry.get("prior_failed") or 0.0) < 0.5:
+    if entry_is_fable(entry) and (entry.get("prior_failed") or 0.0) < 0.5:
         return True
     rung_diff = entry.get("rung_diff")
     task_kind = entry.get("task_kind")
@@ -252,7 +293,7 @@ def tier_rewrite_target(tier_entry):
     """
     entry = tier_entry or {}
     chosen_type = entry.get("chosen_type") or ""
-    if chosen_type == "fable" and (entry.get("prior_failed") or 0.0) >= 0.5:
+    if entry_is_fable(entry) and (entry.get("prior_failed") or 0.0) >= 0.5:
         return None
     rung_diff = entry.get("rung_diff")
     if rung_diff is None or rung_diff < 1:
@@ -265,6 +306,8 @@ def tier_rewrite_target(tier_entry):
     target_rung = entry.get("suggestion")
     if not target_rung:
         return None
+    if entry.get("ladder") == "model":
+        return _model_rewrite_target(entry.get("chosen_model"), target_rung)
     target = tiers.dispatch_name_for_rung(target_rung)
     if not target or not tiers.is_known_agent_type(target):
         return None
@@ -276,6 +319,17 @@ def tier_rewrite_target(tier_entry):
     if index[target_rung] >= index[chosen_rung]:
         return None
     return target
+
+
+def _model_rewrite_target(chosen_model, target_model):
+    """The `model` a rewrite sets: only a known model strictly cheaper than
+    the one chosen, else None."""
+    index = tiers.model_index()
+    if chosen_model not in index or target_model not in index:
+        return None
+    if index[target_model] >= index[chosen_model]:
+        return None
+    return target_model
 
 
 def tier_surface(tier_entry, rewrite_on=None):
@@ -1420,7 +1474,7 @@ def deny_possible_bash(scope, program, root_has_graphify_graph,
     return False
 
 
-def deny_possible_agent(subagent_type):
+def deny_possible_agent(subagent_type, model_override=None):
     """True iff an Agent dispatch could possibly be denied. The tier guard
     can only deny when the chosen rung is strictly above the adequate rung
     for the judged task_kind (or fable without a stated prior failure).
@@ -1430,7 +1484,11 @@ def deny_possible_agent(subagent_type):
     still -- a scout-find dispatch can never be over-tiered, and it is never
     "fable", so the stated-failure rule can't fire either. Everything else
     (scout and up) keeps at least one reachable deny path, so it still gets
-    judged."""
+    judged. A dispatch judged on the model ladder is the same test one ladder
+    over: Haiku, the cheapest model, can never be over-tiered."""
+    chosen_model = tiers.effective_model(subagent_type, model_override)
+    if chosen_model:
+        return chosen_model != tiers.MODEL_LADDER[0]
     return rung_for_agent_type(subagent_type) != tiers.rung_names()[0]
 
 

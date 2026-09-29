@@ -247,9 +247,19 @@ def _bash_deny_reason(entry):
     )
 
 
+def _tier_fix(entry, name):
+    """How to act on a suggestion: a cheaper agent type, or on the model
+    ladder the same type with a cheaper `model`."""
+    if entry.get("ladder") == "model":
+        return "subagent_type=%s with model=%s" % (entry.get("chosen_type") or "general-purpose", name)
+    return "subagent_type=%s" % name
+
+
 def _agent_deny_reason(entry):
     chosen = entry.get("chosen_type", "?")
-    if chosen == "fable" and (entry.get("prior_failed") or 0.0) < 0.5:
+    if entry.get("ladder") == "model":
+        chosen = "%s on %s" % (chosen or "general-purpose", entry.get("chosen_model"))
+    if policy.entry_is_fable(entry) and (entry.get("prior_failed") or 0.0) < 0.5:
         return (
             "BLOCKED (airlock enforce): dispatching 'fable' without stating a prior failed "
             "attempt. Name what was already tried and why it failed (fable is last resort, "
@@ -259,9 +269,9 @@ def _agent_deny_reason(entry):
     suggestion = entry.get("suggestion") or "a cheaper sub-agent"
     return (
         "BLOCKED (airlock enforce): this task looks like '%s', at least two rungs cheaper "
-        "than '%s'. Retry with subagent_type=%s.\n"
+        "than '%s'. Retry with %s.\n"
         "Wrong call? Add `[airlock-ok: <reason>]` to the Agent prompt or description to override."
-        % (entry.get("task_kind", "?"), chosen, suggestion)
+        % (entry.get("task_kind", "?"), chosen, _tier_fix(entry, suggestion))
     )
 
 
@@ -270,16 +280,28 @@ def _agent_warn_text(entry):
     instead, and that nothing was blocked."""
     from . import tiers
     chosen = entry.get("chosen_type") or "?"
-    suggested = tiers.dispatch_name_for_rung(entry.get("suggestion")) or entry.get("suggestion") or "a cheaper agent"
+    if entry.get("ladder") == "model":
+        suggested = entry.get("suggestion") or "a cheaper model"
+        chosen = "%s on %s" % (chosen, entry.get("chosen_model"))
+    else:
+        suggested = tiers.dispatch_name_for_rung(entry.get("suggestion")) or entry.get("suggestion") or "a cheaper agent"
     return (
         "airlock tier advice: dispatched '%s', but Jev judged this task '%s', which '%s' "
-        "covers. Next time use subagent_type=%s.\n"
+        "covers. Next time use %s.\n"
         "Advice only -- nothing was blocked and this call ran as you wrote it."
-        % (chosen, entry.get("task_kind", "?"), entry.get("suggestion", "?"), suggested)
+        % (chosen, entry.get("task_kind", "?"), entry.get("suggestion", "?"), _tier_fix(entry, suggested))
     )
 
 
 def _agent_rewrite_text(entry, target):
+    if entry.get("ladder") == "model":
+        return (
+            "airlock tier rewrite: model changed from '%s' to '%s' -- Jev judged this "
+            "task '%s', which '%s' covers.\n"
+            "To keep your own choice, put `[airlock-ok: <reason>]` in the Agent description "
+            "and dispatch again."
+            % (entry.get("chosen_model", "?"), target, entry.get("task_kind", "?"), target)
+        )
     return (
         "airlock tier rewrite: subagent_type changed from '%s' to '%s' -- Jev judged this "
         "task '%s', which '%s' covers.\n"
@@ -692,11 +714,14 @@ def _surface_tier(entry, data, surface, session_id, mode, advice):
             log.append(entry)
             return False
         original = (data.get("tool_input") or {})
-        # Every other field byte-identical: only subagent_type is touched.
+        # Every other field byte-identical: only subagent_type is touched,
+        # or `model` when the dispatch was judged on the model ladder.
+        field = "model" if entry.get("ladder") == "model" else "subagent_type"
         updated = dict(original)
-        updated["subagent_type"] = target
+        updated[field] = target
+        entry["rewrote_field"] = field
         entry["action"] = "rewrite"
-        entry["rewrote_from"] = entry.get("chosen_type")
+        entry["rewrote_from"] = entry.get("chosen_model" if field == "model" else "chosen_type")
         entry["rewrote_to"] = target
         text = _agent_rewrite_text(entry, target)
         log.append(entry)

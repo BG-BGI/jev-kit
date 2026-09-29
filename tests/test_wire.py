@@ -43,7 +43,9 @@ NEW_HOOK_COMMAND = "%s %s" % (PYTHON3, NEW_HOOK)
 def _run(path, apply_=False, belay=False, function_hooks=False,
          belay_wrapper="/nonexistent/airlock-belay-run",
          session_check=False, session_hook=None,
-         browse_unlock=False, browse_hook=None):
+         browse_unlock=False, browse_hook=None,
+         skill_suggest=False, skill_hook=None,
+         failure_verdict=False, verdict_hook=None):
     env = dict(os.environ)
     env["NEW_HOOK"] = NEW_HOOK
     env["NEW_HOOK_COMMAND"] = NEW_HOOK_COMMAND
@@ -62,6 +64,15 @@ def _run(path, apply_=False, belay=False, function_hooks=False,
     env["BROWSE_UNLOCK_HOOK"] = browse_hook or ""
     env["BROWSE_UNLOCK_COMMAND"] = (
         "%s %s" % (PYTHON3, browse_hook)) if browse_hook else ""
+    # And the UserPromptSubmit skill suggest, which is opt in everywhere.
+    env["SKILL_SUGGEST"] = "1" if skill_suggest else "0"
+    env["SKILL_SUGGEST_HOOK"] = skill_hook or ""
+    env["SKILL_SUGGEST_COMMAND"] = (
+        "%s %s" % (PYTHON3, skill_hook)) if skill_hook else ""
+    env["FAILURE_VERDICT"] = "1" if failure_verdict else "0"
+    env["FAILURE_VERDICT_HOOK"] = verdict_hook or ""
+    env["FAILURE_VERDICT_COMMAND"] = (
+        "%s %s" % (PYTHON3, verdict_hook)) if verdict_hook else ""
     return subprocess.run([sys.executable, str(WIRE), str(path)],
                           capture_output=True, text=True, env=env, timeout=30)
 
@@ -315,6 +326,83 @@ class TestBelayFlag(WireTestBase):
         _run(path, apply_=True, belay=True, belay_wrapper=self.wrapper)
         data = self._data(path)
         self.assertEqual(data["hooks"]["Stop"][0]["hooks"][0]["command"], self.wrapper)
+
+
+class TestSkillSuggestFlag(WireTestBase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.hook = os.path.join(self._tmp.name, "airlock_skill_suggest.py")
+        Path(self.hook).write_text("#!/usr/bin/env python3\n")
+
+    def _entries(self, path):
+        return self._data(path)["hooks"].get("UserPromptSubmit", [])
+
+    def test_added_only_when_asked_for(self):
+        path = self._file(_settings(NEW_HOOK_COMMAND))
+        _run(path, apply_=True, skill_hook=self.hook)
+        self.assertEqual(self._entries(path), [])
+        proc = _run(path, apply_=True, skill_suggest=True, skill_hook=self.hook)
+        self.assertIn("added UserPromptSubmit (skill suggest)", proc.stdout)
+        hook = self._entries(path)[0]["hooks"][0]
+        self.assertEqual(hook["command"], "%s %s" % (PYTHON3, self.hook))
+        self.assertEqual(hook["timeout"], 8)
+        self.assertEqual(self._command(path), NEW_HOOK_COMMAND)
+
+    def test_idempotent_and_keeps_other_prompt_hooks(self):
+        data = json.loads(_settings(NEW_HOOK_COMMAND))
+        data["hooks"]["UserPromptSubmit"] = [
+            {"matcher": "*", "hooks": [{"type": "command", "command": "/bin/other"}]}]
+        path = self._file(json.dumps(data))
+        _run(path, apply_=True, skill_suggest=True, skill_hook=self.hook)
+        first = Path(path).read_text()
+        _run(path, apply_=True, skill_suggest=True, skill_hook=self.hook)
+        self.assertEqual(Path(path).read_text(), first)
+        commands = [h["command"] for e in self._entries(path) for h in e["hooks"]]
+        self.assertEqual(commands, ["/bin/other", "%s %s" % (PYTHON3, self.hook)])
+
+    def test_skipped_without_the_hook_file(self):
+        path = self._file(_settings(NEW_HOOK_COMMAND))
+        proc = _run(path, apply_=True, skill_suggest=True, skill_hook="/nonexistent/hook.py")
+        self.assertEqual(self._entries(path), [])
+        self.assertIn("skipping UserPromptSubmit entry", proc.stdout)
+
+    def test_fresh_file_carries_it(self):
+        path = self._missing_path()
+        _run(path, apply_=True, skill_suggest=True, skill_hook=self.hook)
+        self.assertEqual(self._entries(path)[0]["hooks"][0]["command"],
+                         "%s %s" % (PYTHON3, self.hook))
+
+
+class TestFailureVerdictFlag(WireTestBase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.hook = os.path.join(self._tmp.name, "airlock_failure_verdict.py")
+        Path(self.hook).write_text("#!/usr/bin/env python3\n")
+        self.browse = os.path.join(self._tmp.name, "airlock_browse_unlock.py")
+        Path(self.browse).write_text("#!/usr/bin/env python3\n")
+
+    def test_added_only_when_asked_and_idempotent(self):
+        path = self._file(_settings(NEW_HOOK_COMMAND))
+        _run(path, apply_=True, verdict_hook=self.hook)
+        self.assertNotIn("PostToolUseFailure", self._data(path)["hooks"])
+        proc = _run(path, apply_=True, failure_verdict=True, verdict_hook=self.hook)
+        self.assertIn("added PostToolUseFailure (failure verdict)", proc.stdout)
+        first = Path(path).read_text()
+        _run(path, apply_=True, failure_verdict=True, verdict_hook=self.hook)
+        self.assertEqual(Path(path).read_text(), first)
+        hook = self._data(path)["hooks"]["PostToolUseFailure"][0]["hooks"][0]
+        self.assertEqual((hook["command"], hook["timeout"]), ("%s %s" % (PYTHON3, self.hook), 5))
+
+    def test_never_merged_into_the_browse_unlock_entry(self):
+        path = self._missing_path()
+        _run(path, apply_=True, failure_verdict=True, verdict_hook=self.hook,
+             browse_unlock=True, browse_hook=self.browse)
+        entries = self._data(path)["hooks"]["PostToolUseFailure"]
+        by_matcher = {e["matcher"]: [h["command"] for h in e["hooks"]] for e in entries}
+        self.assertEqual(by_matcher["mcp__browse__browse"], ["%s %s" % (PYTHON3, self.browse)])
+        self.assertEqual(by_matcher["*"], ["%s %s" % (PYTHON3, self.hook)])
 
 
 class TestFunctionHooksFlag(WireTestBase):

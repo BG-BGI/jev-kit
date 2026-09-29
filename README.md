@@ -146,11 +146,14 @@ only: no labelled corpus, no measured numbers, no sustained use.
 | **Speed and cost** | | | | |
 | Warm daemon | Holds a warm connection: 0.3 s a judgement, not 0.9 s | **yes** | Nothing of its own | exercised |
 | Compaction | Installs the community `fast-jev-compaction` plugin | no, opt-in | **Up to 25,000 tokens of raw tool inputs and results per request** | never enabled here |
+| Skill suggest | Names at most one skill per turn, so the agent loads the right `SKILL.md` or none. Two Jev requests | no, opt-in | The prompt, redacted, and the skill roster's descriptions | labelled eval only |
+| Failure verdict | Once failures pile up, says whether to change approach, look first or ask. One Jev request, advice only | no, opt-in | Redacted call summaries and error heads of recent failures | labelled eval only |
 | File search | Per-user `plocate` index of `$HOME`, refreshed hourly | **yes** | Nothing. Local | exercised |
 | File search (Windows) | Detects [Everything](https://www.voidtools.com/) (`es.exe`) and steers searches at it. Never installs it | **yes** on Windows | Nothing. Local | one Windows 11 machine |
 | **Uses** | | | | |
 | Browser agent | Jev decides each click, or a warm planner does with `plan: true`. Vendored at a pin | no, opt-in | Page state and goals, to the decider you configure | own numbers |
 | Review | A Jev code reviewer at a pin, with a fail-open wrapper | no, opt-in | Diffs, to the gate you configure | no numbers here |
+| `decide` MCP tool | Claude asks Jev for calibrated choice, score and yes/no decisions, many per call | no, opt-in | The context and questions Claude sends, redacted | **experimental** |
 | Harness | Jev decides each step of a `make check-agent` fix loop; Claude only writes the edits | no | Failed gate output, redacted, to TypeSafe | **experimental** |
 | Document classifier | Two-stage classifier with an escape hatch and a confidence gate | no | Page text, when you call it | **experimental** |
 | Log triage | Redact-first, local-rules-first triage on stdin | no | Redacted lines, once local rules run out | **experimental** |
@@ -289,7 +292,11 @@ flowchart LR
 | `fable` with no prior failed attempt stated | blocked |
 
 The ladder is yours: `~/.config/airlock/tiers.json` overrides the built-in one,
-because agent type names differ per machine. Rewrite mode, which edits the
+because agent type names differ per machine. When the model a dispatch runs on
+is known (a `model` on the call, Explore, or `inherit_model` in `tiers.json`),
+the guard compares models instead, haiku to fable, and names the `model` to set.
+That advice works on a stock install with no custom agents. See
+[docs/rules.md](docs/rules.md#the-model-ladder-judged-by-what-the-call-runs-on). Rewrite mode, which edits the
 dispatch instead of advising, exists and is off by default for a reason set out
 in [docs/rules.md](docs/rules.md#rewrite-mode-off-by-default-and-here-is-the-catch).
 
@@ -308,12 +315,14 @@ Nothing is extrapolated.
 | Deny-capable rule accuracy | **100%**, zero false denies | `python3 -m airlock.eval`, 2026-09-19, on labelled cases per rule (R1 16, R2 8, R3 10, R4 11, R5 9, R6 9, R7 10, R9 9) |
 | `R10-general-risk` accuracy | **95.2%** (20/21), zero false denies | same run, 21 labelled cases. Was 88.9% before the quieting pass. It can only warn, so a false deny is structurally impossible |
 | `R10` pre-filter skip rate | fired on **2 of 284** Bash calls (0.7%); consulted on 0 | the existing shadow log. Every row there is a call a specific rule had already claimed |
-| Tier-guard accuracy | **98.2%** (56 of 57 scored), zero false denies, zero missed denies | `python3 -m airlock.eval`, 2026-09-19, 58 labelled Agent dispatches. Block 18/18, silent 29/29, warn 9/10 |
+| Tier-guard accuracy | **98.6%** (69 of 70 scored), zero false denies, zero missed denies | `python3 -m airlock.eval`, 2026-09-29, 71 labelled Agent dispatches, 13 of them on the model ladder. Block 21/21, silent 36/36, warn 12/13 |
 | `task_kind` calibration | **98.0%** accuracy, ECE 1.9%, over 50 labelled rows | `tuning/calibrate.sh`, 2026-09-19 |
 | `search_intent` calibration | **84.4%** accuracy, ECE 12.6%, over 32 labelled rows | same run. The weaker of the two guards |
 | `subagent_type` ablation | `task_kind` **did not move**, 30/30 across five rungs | `python3 eval/ablation.py`, 2026-09-19. Thirty cases on five prompts is not a general result |
 | Browser agent, Jev as decider | **9/9** success, **314-486 ms** median decision | `browser/README.md`, 2026-09-19. Sonnet 9/9 at 1.1-1.5 s; Haiku 4/9 at 0.76-2.8 s. n=3 per cell, directional only |
 | Browser agent, Claude cost per run | **0.0008 USD** with Jev against **0.1868 USD** with Sonnet deciding (goal 1) | same sweep. Cost is the CLI's own `total_cost_usd`, never tokens multiplied by a price |
+| Skill suggest | **28/28** right skill, **0/10** loaded when none fits | `python3 -m suggest.eval`, 2026-09-29, 38 synthetic cases on a 28-skill synthetic roster. Suggester accuracy, not Claude spend |
+| Failure verdict | **0** wrong verdicts said over 13 runs; 8-9 of 13 verdicts right, 4 of 8 that should speak did | `python3 -m airlock.failure_eval`, 2026-09-29, two runs of 13 synthetic failure runs. It errs toward silence |
 | Harness, gate-fix loop | **0.0367 USD** a run with Jev deciding, against 0.0571 (Haiku), 0.0773 (Sonnet) and 0.1557 (Opus) with Claude alone, all green | `python3 -m harness.bench`, 2026-09-29, one seed failing five gates in one repository, n=2 per arm (Opus n=1). 36% of the saving holds on the same model |
 | A/B bench, guard against no guard | **zero denies** over 30 sessions | `bench/results/20260919-120344.md`, 2026-09-19, enforce mode, five tasks |
 
