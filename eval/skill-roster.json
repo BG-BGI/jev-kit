@@ -1,0 +1,142 @@
+[
+ {
+  "name": "pptx-author",
+  "description": "Build new PowerPoint decks from scratch with python-pptx: slides, layouts, charts, speaker notes.",
+  "body": "Use when the user wants a NEW .pptx deck created. Start from a layout, add slides one at a time, save to disk. Not for editing an existing deck."
+ },
+ {
+  "name": "pptx-edit",
+  "description": "Edit an existing .pptx: replace text, reorder or delete slides, swap images, fix fonts.",
+  "body": "Use when a .pptx already exists and needs changes. Open it, locate the shapes, change them in place, save a copy."
+ },
+ {
+  "name": "xlsx",
+  "description": "Create, read and edit Excel workbooks: formulas, formatting, charts, pivot-style summaries.",
+  "body": "Use for any .xlsx task. openpyxl for cell work, pandas for bulk data. Always keep formulas live rather than pasting values."
+ },
+ {
+  "name": "docx",
+  "description": "Create and edit Word documents: headings, tables, tracked changes, comments.",
+  "body": "Use for .docx files. python-docx for structure; preserve styles; tracked changes need the XML path."
+ },
+ {
+  "name": "pdf",
+  "description": "Read, split, merge, fill forms in and extract tables from PDF files.",
+  "body": "Use for .pdf input or output. pypdf for pages, pdfplumber for tables, form filling via field names."
+ },
+ {
+  "name": "ros2-launch",
+  "description": "Write and debug ROS 2 launch files: nodes, parameters, remappings, composable containers.",
+  "body": "Use when a launch.py or launch.xml needs writing or fixing. Covers IncludeLaunchDescription, parameters from YAML, namespaces."
+ },
+ {
+  "name": "ros2-tf",
+  "description": "Diagnose and fix ROS 2 tf2 transform trees: missing frames, extrapolation errors, static transforms.",
+  "body": "Use for tf2 errors: frame does not exist, lookup would require extrapolation, disconnected trees. view_frames, tf2_echo."
+ },
+ {
+  "name": "gazebo-sim",
+  "description": "Build and run Gazebo simulation worlds, sensors and robot models for ROS 2.",
+  "body": "Use to create SDF worlds, spawn robots, add lidar or camera sensors, bridge topics with ros_gz_bridge."
+ },
+ {
+  "name": "git-commit",
+  "description": "Write a Conventional Commits message for the staged changes and commit.",
+  "body": "Use when the user asks to commit. Inspect the staged diff, pick the type and scope, write an imperative subject."
+ },
+ {
+  "name": "pr-review",
+  "description": "Review a pull request diff for bugs, missing tests and risky changes, and post findings.",
+  "body": "Use when asked to review a PR or branch. Read the diff, run the tests, rank findings by severity."
+ },
+ {
+  "name": "tdd",
+  "description": "Test-driven development: write a failing test, make it pass, refactor.",
+  "body": "Use when the user wants a feature built test-first or says red-green-refactor."
+ },
+ {
+  "name": "debug-python",
+  "description": "Find the root cause of a failing Python test or traceback by bisecting and instrumenting.",
+  "body": "Use when a Python test fails or a traceback needs explaining. Reproduce, minimise, bisect, fix the cause not the symptom."
+ },
+ {
+  "name": "docker",
+  "description": "Write Dockerfiles and compose files, and debug container builds and networking.",
+  "body": "Use for Dockerfile, docker compose, image size, multi-stage builds and container networking issues."
+ },
+ {
+  "name": "k8s-deploy",
+  "description": "Deploy and troubleshoot workloads on Kubernetes: manifests, Helm charts, rollouts, crash loops.",
+  "body": "Use for kubectl, Helm, CrashLoopBackOff, rollout status, resource limits."
+ },
+ {
+  "name": "terraform",
+  "description": "Write and plan Terraform for cloud infrastructure, and fix state or provider errors.",
+  "body": "Use for .tf files, terraform plan/apply errors, state moves, provider version pins."
+ },
+ {
+  "name": "sql-query",
+  "description": "Write and optimise SQL queries against a relational database, and explain query plans.",
+  "body": "Use when the user needs a query written, a slow query sped up, or EXPLAIN output read."
+ },
+ {
+  "name": "label-printer",
+  "description": "Print shipping and asset labels on the office thermal label printer, and encode RFID tags.",
+  "body": "Use to send ZPL to the thermal printer, print asset tags, encode RFID EPCs, troubleshoot VOID labels."
+ },
+ {
+  "name": "calendar",
+  "description": "Read and create events on the user's calendar, find free slots, send invites.",
+  "body": "Use to schedule meetings, check availability, create or move events."
+ },
+ {
+  "name": "email-draft",
+  "description": "Draft and send email from the user's mailbox, with attachments.",
+  "body": "Use to compose, reply to, or send email on the user's behalf."
+ },
+ {
+  "name": "slack-post",
+  "description": "Post messages and files to the team's Slack channels, and read recent threads.",
+  "body": "Use to post an announcement, reply in a thread, or summarise a channel."
+ },
+ {
+  "name": "jira",
+  "description": "Create, update and search Jira issues and sprints.",
+  "body": "Use for Jira tickets: create a bug, move an issue, query a sprint, add comments."
+ },
+ {
+  "name": "diagram",
+  "description": "Draw architecture, sequence and data-flow diagrams as SVG or Mermaid.",
+  "body": "Use when the user wants a system drawn: boxes and arrows, sequence diagrams, state machines."
+ },
+ {
+  "name": "frontend-design",
+  "description": "Design polished web interfaces: layout, typography, color, components.",
+  "body": "Use when building or restyling a web page or component and it should look designed, not default."
+ },
+ {
+  "name": "web-scrape",
+  "description": "Crawl a website and extract structured data into JSON or CSV.",
+  "body": "Use to scrape listings, product pages or tables from a site, following pagination."
+ },
+ {
+  "name": "data-viz",
+  "description": "Make charts and dashboards from data: bar, line, scatter, heatmap, with good defaults.",
+  "body": "Use whenever a chart or plot is needed, in any library."
+ },
+ {
+  "name": "security-audit",
+  "description": "Audit code for security vulnerabilities: injection, secrets, auth flaws, unsafe deserialisation.",
+  "body": "Use for a security review of a codebase or a change."
+ },
+ {
+  "name": "release-notes",
+  "description": "Write release notes and a changelog entry from the commits since the last tag.",
+  "body": "Use when preparing a release: group commits by type, write user-facing notes."
+ },
+ {
+  "name": "dependency-upgrade",
+  "description": "Upgrade a project's dependencies safely: bump versions, read changelogs, fix breakages.",
+  "body": "Use to update packages, resolve version conflicts, or clear a vulnerability advisory."
+ }
+]

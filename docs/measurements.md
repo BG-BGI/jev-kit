@@ -304,6 +304,39 @@ and `FIND` adds a call when it is used.
 eight failures the run left English Wikipedia through an interlanguage link and
 ended on `fr.wikipedia.org`, at Boris Spassky or at Saint Petersburg.
 
+## Skill suggest
+
+`python3 -m suggest.eval`, 2026-09-29. 38 synthetic cases against a 28-skill
+synthetic roster (`eval/skill-roster.json`, `eval/skill-cases.jsonl`), built
+with close pairs on purpose: a new deck against an edit to a deck, launch files
+against tf2, Slack against a Mastodon request. 28 cases have a right skill and
+10 have none. Four cases ran at a time.
+
+| | result |
+|---|---|
+| right skill suggested | **28/28** |
+| wrong skill suggested | **0/28** |
+| no skill fits, and none suggested | **10/10** |
+| no skill fits, and one suggested anyway | **0/10** |
+| median latency, four at a time | 720 ms |
+| mean Jev tokens per turn | about 2,000 |
+
+The cookbook's first gate, 0.30, was too tight for coding requests. The
+new-deck case scored exactly 0.300 against it, and every other file or code
+request scored 0.30 to 0.40. Every no-skill case scored 0.26 or less. The gate
+is 0.20 here. The second request's fit check caught every no-skill case that
+cleared the gate: Mastodon, flight booking and a small rename.
+
+On the real 126-skill roster of one machine, one turn took about 0.4 s and
+about 10,000 Jev input tokens through the warm daemon. Five hand-run prompts
+picked the right skill, including two org-served skills that exist only in the
+session's listing (`anthropic-skills:pptx`, `anthropic-skills:xlsx`).
+
+This is **not** a measurement of Claude spend. A clean score on 38 synthetic
+cases says the suggester picks well. It does not say how many wrong loads it
+saves an agent, which is what the cookbook's 488-request run measured and what
+`bench/` would have to run here.
+
 ## Known limits
 
 - **The bench found no denies.** The guard's measured value so far is that it
@@ -327,6 +360,8 @@ ended on `fr.wikipedia.org`, at Boris Spassky or at Saint Petersburg.
 - **`search_intent` is the weaker of the two guards**, at 84.4% on its labelled
   rows with an ECE of 12.6%, against 98.0% and 1.9% for `task_kind`.
 - **`shim/`: PageIndex local indexing works through it, chat does not.**
+- **Skill suggest is measured on synthetic cases only.** 38 of them, against a
+  synthetic roster. Its effect on Claude's own spend is not yet measured here.
 - **Nothing here is a security control.** It is a cost and hygiene guard that
   fails open by design. A control that depends on an agent choosing to obey it
   is not a control; if something must not happen, restrict it at the platform.

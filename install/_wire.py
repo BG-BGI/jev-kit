@@ -17,7 +17,8 @@ Two jobs, both idempotent:
      default: they are the only thing
      that lets R11 stand aside when the kit's own `browse` tool has given up
      -- see hooks/airlock_browse_unlock.py), and, opt in per flag, the belay
-     Stop hook and the function-hooks env var.
+     Stop hook, the skill-suggest UserPromptSubmit hook and the
+     function-hooks env var.
      Adding necessarily changes the JSON's structure, so this path
      re-serializes the whole file (via json.load/json.dump, which preserves
      existing key order -- Python dicts keep insertion order) rather than
@@ -32,7 +33,8 @@ becoming a JSON re-serializer for that file.
 
 Reads NEW_HOOK, NEW_HOOK_COMMAND, APPLY, BELAY, BELAY_WRAPPER,
 FUNCTION_HOOKS, SESSION_CHECK, SESSION_CHECK_HOOK, SESSION_CHECK_COMMAND,
-BROWSE_UNLOCK, BROWSE_UNLOCK_HOOK and BROWSE_UNLOCK_COMMAND from the
+BROWSE_UNLOCK, BROWSE_UNLOCK_HOOK, BROWSE_UNLOCK_COMMAND, SKILL_SUGGEST,
+SKILL_SUGGEST_HOOK and SKILL_SUGGEST_COMMAND from the
 environment (set by wire.sh) and the settings.json paths from argv.
 Never touches a path not given on the command line.
 """
@@ -66,6 +68,12 @@ SESSION_CHECK_COMMAND = os.environ.get("SESSION_CHECK_COMMAND", SESSION_CHECK_HO
 BROWSE_UNLOCK = os.environ.get("BROWSE_UNLOCK", "1") == "1"
 BROWSE_UNLOCK_HOOK = os.environ.get("BROWSE_UNLOCK_HOOK", "")
 BROWSE_UNLOCK_COMMAND = os.environ.get("BROWSE_UNLOCK_COMMAND", BROWSE_UNLOCK_HOOK)
+# The skill-suggest hook is OPT IN, like belay: it sends every judged prompt,
+# redacted, to TypeSafe, so it is never added unless asked for.
+SKILL_SUGGEST = os.environ.get("SKILL_SUGGEST") == "1"
+SKILL_SUGGEST_HOOK = os.environ.get("SKILL_SUGGEST_HOOK", "")
+SKILL_SUGGEST_COMMAND = os.environ.get("SKILL_SUGGEST_COMMAND", SKILL_SUGGEST_HOOK)
+SKILL_SUGGEST_EVENT = "UserPromptSubmit"
 # The one matcher in the whole file that is not "*". PostToolUse fires after
 # every tool call in the session, and this hook has exactly one tool to say
 # anything about, so the filtering is worth doing before the interpreter
@@ -88,6 +96,10 @@ SESSION_CHECK_TIMEOUT = 5
 # the same generous ceiling the other two carry, for a hook that should never
 # be near it.
 BROWSE_UNLOCK_TIMEOUT = 5
+# Two Jev requests of at most 2 s each (hooks/airlock_skill_suggest.py
+# SUGGEST_TIMEOUT_S), plus start-up and the roster read. Past this ceiling
+# Claude Code drops the hook and the turn runs without a suggestion.
+SKILL_SUGGEST_TIMEOUT = 8
 
 # Matches a JSON string value that is (or ends in) a path to airlock.py's
 # hook entry point -- e.g. "$HOME/code/airlock/hooks/airlock.py" or
@@ -238,6 +250,16 @@ def _belay_block():
         {"type": "command", "command": BELAY_WRAPPER, "timeout": BELAY_TIMEOUT}]}
 
 
+def _skill_suggest_block():
+    return {"matcher": "*", "hooks": [
+        {"type": "command", "command": SKILL_SUGGEST_COMMAND,
+         "timeout": SKILL_SUGGEST_TIMEOUT}]}
+
+
+def _skill_suggest_ok():
+    return bool(SKILL_SUGGEST and SKILL_SUGGEST_HOOK and os.path.isfile(SKILL_SUGGEST_HOOK))
+
+
 def _session_check_block():
     return {"matcher": "*", "hooks": [
         {"type": "command", "command": SESSION_CHECK_COMMAND,
@@ -326,6 +348,8 @@ def _fresh_settings():
             data["hooks"][event] = [_browse_unlock_block()]
     if BELAY and BELAY_WRAPPER and os.path.isfile(BELAY_WRAPPER):
         data["hooks"]["Stop"] = [_belay_block()]
+    if _skill_suggest_ok():
+        data["hooks"][SKILL_SUGGEST_EVENT] = [_skill_suggest_block()]
     if FUNCTION_HOOKS:
         data["env"] = {FUNCTION_HOOKS_ENV_KEY: "1"}
     return data
@@ -358,6 +382,13 @@ def _describe_fresh():
                           % (BELAY_WRAPPER, BELAY_TIMEOUT))
         else:
             lines.append("  Stop (belay): SKIPPED, no wrapper at %s" % (BELAY_WRAPPER or "<unset>"))
+    if SKILL_SUGGEST:
+        if _skill_suggest_ok():
+            lines.append("  %s (skill suggest): matcher \"*\", command \"%s\", timeout %d"
+                         % (SKILL_SUGGEST_EVENT, SKILL_SUGGEST_COMMAND, SKILL_SUGGEST_TIMEOUT))
+        else:
+            lines.append("  %s (skill suggest): SKIPPED, no hook at %s"
+                         % (SKILL_SUGGEST_EVENT, SKILL_SUGGEST_HOOK or "<unset>"))
     if FUNCTION_HOOKS:
         lines.append("  env.%s = \"1\"" % FUNCTION_HOOKS_ENV_KEY)
     return lines
@@ -460,6 +491,11 @@ def process(path):
     stop_entries = (data.get("hooks") or {}).get("Stop") or []
     needs_belay = belay_ok and not _has_command(stop_entries, BELAY_WRAPPER)
 
+    skill_ok = _skill_suggest_ok()
+    skill_missing_hook = SKILL_SUGGEST and not skill_ok
+    skill_entries = (data.get("hooks") or {}).get(SKILL_SUGGEST_EVENT) or []
+    needs_skill_suggest = skill_ok and not _has_command(skill_entries, SKILL_SUGGEST_COMMAND)
+
     needs_function_hooks = FUNCTION_HOOKS and (data.get("env") or {}).get(FUNCTION_HOOKS_ENV_KEY) != "1"
 
     # The SessionStart session check. Two separate questions, deliberately:
@@ -493,7 +529,7 @@ def process(path):
 
     needs_repoint = needs_repoint or needs_repoint_session or needs_repoint_browse
     needs_add = (needs_add_pretooluse or needs_add_session or needs_add_browse
-                 or needs_belay or needs_function_hooks)
+                 or needs_belay or needs_skill_suggest or needs_function_hooks)
 
     if not (needs_repoint or needs_add):
         if matches:
@@ -509,6 +545,9 @@ def process(path):
         if browse_missing_hook:
             print("%s: no browse-unlock hook at %s, skipping PostToolUse entry"
                   % (path, BROWSE_UNLOCK_HOOK or "<unset>"))
+        if skill_missing_hook:
+            print("%s: --skill-suggest given but no hook at %s, skipping %s entry"
+                  % (path, SKILL_SUGGEST_HOOK or "<unset>", SKILL_SUGGEST_EVENT))
         return False
 
     # A pure repoint -- nothing to ADD -- keeps the byte-preserving text
@@ -585,6 +624,11 @@ def process(path):
         if _append_hook(new_data, "Stop", _belay_block(), BELAY_WRAPPER):
             actions.append('added Stop (belay): matcher "*", command "%s", timeout %d'
                             % (BELAY_WRAPPER, BELAY_TIMEOUT))
+    if needs_skill_suggest:
+        if _append_hook(new_data, SKILL_SUGGEST_EVENT, _skill_suggest_block(),
+                        SKILL_SUGGEST_COMMAND):
+            actions.append('added %s (skill suggest): matcher "*", command "%s", timeout %d'
+                           % (SKILL_SUGGEST_EVENT, SKILL_SUGGEST_COMMAND, SKILL_SUGGEST_TIMEOUT))
     if needs_function_hooks:
         new_data.setdefault("env", {})[FUNCTION_HOOKS_ENV_KEY] = "1"
         actions.append('set env.%s = "1"' % FUNCTION_HOOKS_ENV_KEY)
@@ -609,6 +653,9 @@ def process(path):
         if browse_missing_hook:
             print("  (no browse-unlock hook at %s, skipping PostToolUse entry)"
                   % (BROWSE_UNLOCK_HOOK or "<unset>"))
+        if skill_missing_hook:
+            print("  (--skill-suggest given but no hook at %s, skipping %s entry)"
+                  % (SKILL_SUGGEST_HOOK or "<unset>", SKILL_SUGGEST_EVENT))
         return True
 
     backup = _backup(path)
@@ -626,6 +673,9 @@ def process(path):
     if browse_missing_hook:
         print("  (no browse-unlock hook at %s, skipping PostToolUse entry)"
               % (BROWSE_UNLOCK_HOOK or "<unset>"))
+    if skill_missing_hook:
+        print("  (--skill-suggest given but no hook at %s, skipping %s entry)"
+              % (SKILL_SUGGEST_HOOK or "<unset>", SKILL_SUGGEST_EVENT))
     return True
 
 

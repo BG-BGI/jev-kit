@@ -146,6 +146,7 @@ only: no labelled corpus, no measured numbers, no sustained use.
 | **Speed and cost** | | | | |
 | Warm daemon | Holds a warm connection: 0.3 s a judgement, not 0.9 s | **yes** | Nothing of its own | exercised |
 | Compaction | Installs the community `fast-jev-compaction` plugin | no, opt-in | **Up to 25,000 tokens of raw tool inputs and results per request** | never enabled here |
+| Skill suggest | Names at most one skill per turn, so the agent loads the right `SKILL.md` or none. Two Jev requests | no, opt-in | The prompt, redacted, and the skill roster's descriptions | labelled eval only |
 | File search | Per-user `plocate` index of `$HOME`, refreshed hourly | **yes** | Nothing. Local | exercised |
 | File search (Windows) | Detects [Everything](https://www.voidtools.com/) (`es.exe`) and steers searches at it. Never installs it | **yes** on Windows | Nothing. Local | one Windows 11 machine |
 | **Uses** | | | | |
@@ -313,6 +314,7 @@ Nothing is extrapolated.
 | `subagent_type` ablation | `task_kind` **did not move**, 30/30 across five rungs | `python3 eval/ablation.py`, 2026-09-19. Thirty cases on five prompts is not a general result |
 | Browser agent, Jev as decider | **9/9** success, **314-486 ms** median decision | `browser/README.md`, 2026-09-19. Sonnet 9/9 at 1.1-1.5 s; Haiku 4/9 at 0.76-2.8 s. n=3 per cell, directional only |
 | Browser agent, Claude cost per run | **0.0008 USD** with Jev against **0.1868 USD** with Sonnet deciding (goal 1) | same sweep. Cost is the CLI's own `total_cost_usd`, never tokens multiplied by a price |
+| Skill suggest | **28/28** right skill, **0/10** loaded when none fits | `python3 -m suggest.eval`, 2026-09-29, 38 synthetic cases on a 28-skill synthetic roster. Suggester accuracy, not Claude spend |
 | A/B bench, guard against no guard | **zero denies** over 30 sessions | `bench/results/20260919-120344.md`, 2026-09-19, enforce mode, five tasks |
 
 **Read that last row as a backstop, not a tax.** Thirty sessions of ordinary
