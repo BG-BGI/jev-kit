@@ -47,7 +47,7 @@ policy.
 import os
 from pathlib import Path
 
-from .platform_compat import is_windows
+from .platform_compat import is_macos, is_windows
 
 APP = "airlock"
 # The KIT-level name. One TYPESAFE_API_KEY is read by every component in the
@@ -204,7 +204,7 @@ def state_file(name):
     return state_dir() / name
 
 
-def _runtime_dir(windows=None):
+def _runtime_dir(windows=None, macos=None):
     """The parent the daemon socket lives in.
 
     On Windows there is no daemon at all (no AF_UNIX), so there is also no
@@ -212,10 +212,18 @@ def _runtime_dir(windows=None):
     is a path under the per-user state directory that nothing ever binds.
     `airlock/client.py` never even asks for it there -- it skips the daemon
     outright -- but the function must still return something rather than
-    raising or naming /tmp."""
+    raising or naming /tmp.
+
+    macOS has no /run/user and launchd does not set XDG_RUNTIME_DIR, so the
+    fallback there is ~/Library/Caches: per-user, never world-writable, and
+    the same path for the launchd-started daemon and for a hook started from
+    any terminal. $TMPDIR is per-user too, but a LaunchAgent is not
+    guaranteed to see the same value the terminal does."""
     if is_windows(windows):
         return str(state_dir(windows=windows) / "runtime")
     runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime and is_macos(macos):
+        return str(_home() / "Library" / "Caches")
     if not runtime:
         try:
             runtime = "/run/user/%d" % os.getuid()

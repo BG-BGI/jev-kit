@@ -22,6 +22,7 @@
 # It touches only directories under $HOME. It does not edit any settings.json,
 # does not touch a systemd unit, and does not stop or start anything.
 set -uo pipefail
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/portable.sh"
 
 DRY_RUN=0
 case "${1:-}" in
@@ -114,7 +115,7 @@ migrate_slot() {
   fi
 
   mkdir -p "$(dirname "$new")"
-  if ! mv -T "$src" "$new"; then
+  if ! mv "$src" "$new"; then
     say "  $label: mv failed for $src" >&2
     status=1
     return 0

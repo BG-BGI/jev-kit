@@ -4,6 +4,7 @@
 # those already reference $AIRLOCK_HOME/current, so a rollback here takes
 # effect on the next tool call / daemon restart without any further edits.
 set -euo pipefail
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/portable.sh"
 
 AIRLOCK_HOME="${AIRLOCK_HOME:-$HOME/.local/share/airlock}"
 RELEASES_DIR="$AIRLOCK_HOME/releases"
@@ -21,10 +22,11 @@ if [ -z "$CURRENT_REAL" ]; then
 fi
 CURRENT_NAME="$(basename "$CURRENT_REAL")"
 
-mapfile -t ALL_RELEASES < <(ls -1t "$RELEASES_DIR" 2>/dev/null | grep -v '^\.export-')
+ALL_RELEASES=()
+while IFS= read -r _release; do ALL_RELEASES+=("$_release"); done < <(ls -1t "$RELEASES_DIR" 2>/dev/null | grep -v '^\.export-')
 
 PREVIOUS=""
-for i in "${!ALL_RELEASES[@]}"; do
+for i in ${ALL_RELEASES[@]+"${!ALL_RELEASES[@]}"}; do
   if [ "${ALL_RELEASES[$i]}" = "$CURRENT_NAME" ]; then
     PREVIOUS="${ALL_RELEASES[$((i + 1))]:-}"
     break
@@ -38,7 +40,7 @@ fi
 
 TMP_LINK="$AIRLOCK_HOME/.current.tmp.$$"
 ln -sfn "$RELEASES_DIR/$PREVIOUS" "$TMP_LINK"
-mv -T "$TMP_LINK" "$CURRENT_LINK"
+airlock_replace_link "$TMP_LINK" "$CURRENT_LINK"
 
 echo "rollback.sh: current $CURRENT_NAME -> $PREVIOUS"
 echo "current -> $(readlink -f "$CURRENT_LINK")"

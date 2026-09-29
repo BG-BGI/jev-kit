@@ -53,7 +53,7 @@ SEARCH_PROGRAMS = {
     "find", "fd", "fdfind",
     "grep", "egrep", "fgrep", "rg", "ag", "ack",
     "tree", "ls", "du",
-    "locate", "plocate",
+    "locate", "plocate", "mdfind",
 }
 
 # Search shapes that exist only on Windows. Recognised in addition to the set
@@ -852,11 +852,12 @@ def _unwrap_windows_shell(tokens):
 
 
 _SCOPE_RANK = {"unknown": 0, "stdin": 1, "single_dir": 2, "single_repo": 2, "disk_wide": 3}
-# The already-indexed tools. On Linux that is plocate; on Windows it is
+# The already-indexed tools. On Linux that is plocate; on macOS it is
+# Spotlight's `mdfind`; on Windows it is
 # voidtools Everything's `es`. A command that already uses one of them must
 # never be displaced by a walker of the same scope, and must never be told to
 # use the indexed tool it is already using.
-_LOCATE_FAMILY = ("locate", "plocate", "es")
+_LOCATE_FAMILY = ("locate", "plocate", "mdfind", "es")
 
 
 def _widest(current, candidate):
@@ -1032,7 +1033,7 @@ def classify_command(command, cwd=None, windows=None, _depth=0):
                 roots = _classify_dir_arg(args, current_cwd, windows)
             elif program == "du":
                 roots = _classify_dir_arg(args, current_cwd, windows)
-            elif program in ("locate", "plocate"):
+            elif program in ("locate", "plocate", "mdfind"):
                 found_any = True
                 last = _widest(last, {"scope": "disk_wide", "program": program, "roots": []})
                 continue

@@ -21,6 +21,10 @@ detail is [docs/components.md](docs/components.md), the rules table is
 installer rather than bash, no warm daemon, and `es.exe` (voidtools
 Everything) in place of `plocate` for file search.
 
+**On macOS?** The bash installer works as-is. It writes LaunchAgents through
+`install/launchd.py` and uses Spotlight for file search. See
+[docs/INSTALL-MACOS.md](docs/INSTALL-MACOS.md).
+
 **Working on the code?** Three checks have to pass.
 
 - `python3 -m unittest discover -s tests`. 1310 tests on Linux. The same suite

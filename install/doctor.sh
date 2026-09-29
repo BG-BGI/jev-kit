@@ -17,6 +17,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/portable.sh"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 if [ -f "$SCRIPT_DIR/config.env" ]; then
@@ -28,8 +29,10 @@ fi
 
 AIRLOCK_HOME="${AIRLOCK_HOME:-${PLUMBLINE_HOME:-${JEV_HOME:-$HOME/.local/share/airlock}}}"
 PY="${PYTHON:-python3}"
-: "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
-export XDG_RUNTIME_DIR
+if ! airlock_is_macos; then
+  : "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+  export XDG_RUNTIME_DIR
+fi
 
 FAILED=0
 PASSED=0
@@ -356,7 +359,7 @@ head_ "Health check"
 if [ ! -f "$LIVE/airlock/health.py" ]; then
   skip "no health module in the live copy"
 else
-  HEALTH_JSON="$(cd "$LIVE" && timeout 20 "$PY" -m airlock.health 2>/dev/null)"
+  HEALTH_JSON="$(cd "$LIVE" && airlock_timeout 20 "$PY" -m airlock.health 2>/dev/null)"
   HEALTH_RC=$?
   if [ -z "$HEALTH_JSON" ]; then
     fail "health check produced no output (exit $HEALTH_RC)"
@@ -374,7 +377,15 @@ fi
 # ---------------------------------------------------------------------------
 head_ "Filesearch"
 DB="$HOME/.cache/plocate/home.db"
-if ! command -v plocate >/dev/null 2>&1; then
+if airlock_is_macos && ! command -v plocate >/dev/null 2>&1; then
+  if ! command -v mdfind >/dev/null 2>&1; then
+    skip "mdfind not found (Spotlight is the filename index on macOS)"
+  elif [ -n "$(mdfind -onlyin "$REPO_ROOT" -name 'doctor.sh' 2>/dev/null | head -1)" ]; then
+    pass "Spotlight answered: mdfind found install/doctor.sh under $REPO_ROOT"
+  else
+    skip "Spotlight did not return install/doctor.sh (indexing off, or $REPO_ROOT excluded)"
+  fi
+elif ! command -v plocate >/dev/null 2>&1; then
   skip "plocate not installed"
 elif [ ! -f "$DB" ]; then
   skip "no index at $DB (run filesearch/install.sh)"
@@ -395,7 +406,20 @@ fi
 
 # ---------------------------------------------------------------------------
 head_ "Timers"
-if ! command -v systemctl >/dev/null 2>&1 || ! systemctl --user show-environment >/dev/null 2>&1; then
+if airlock_is_macos; then
+  for unit in airlock-daemon airlock-health airlock-tune; do
+    if [ ! -f "$HOME/Library/LaunchAgents/com.jev-kit.$unit.plist" ]; then
+      skip "com.jev-kit.$unit not installed"
+    elif line="$("$PY" "$REPO_ROOT/install/launchd.py" status "$unit" 2>/dev/null)"; then
+      case "$unit:$line" in
+        airlock-daemon:*state=running*|airlock-health:*|airlock-tune:*) pass "$line" ;;
+        *) fail "$line -- the daemon is loaded but not running; see ~/Library/Logs/jev-kit/$unit.log" ;;
+      esac
+    else
+      fail "com.jev-kit.$unit plist present but not loaded (launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jev-kit.$unit.plist)"
+    fi
+  done
+elif ! command -v systemctl >/dev/null 2>&1 || ! systemctl --user show-environment >/dev/null 2>&1; then
   skip "no systemd user session; nothing is scheduled (see install/install.sh --help)"
 else
   for unit in airlock-daemon.service airlock-health.timer airlock-tune.timer airlock-filesearch.timer; do
@@ -528,7 +552,7 @@ else
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"doctor","version":"0"}}}' \
     '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
     '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-    | JEV_BROWSE_PREWARM=0 timeout 30 "$PY" "$BROWSE_SERVER" 2>/dev/null)"
+    | JEV_BROWSE_PREWARM=0 airlock_timeout 30 "$PY" "$BROWSE_SERVER" 2>/dev/null)"
   if printf '%s' "$BROWSE_OUT" | grep -q '"serverInfo"' \
      && printf '%s' "$BROWSE_OUT" | grep -q '"name": "browse"'; then
     pass "browse: server answered initialize and tools/list over stdio (tool: browse)"
@@ -548,7 +572,13 @@ else
 fi
 
 if [ -x "$HOME/bin/claude-auto-update" ]; then
-  if systemctl --user list-unit-files claude-auto-update.timer >/dev/null 2>&1 \
+  if airlock_is_macos; then
+    if line="$("$PY" "$REPO_ROOT/install/launchd.py" status claude-auto-update 2>/dev/null)"; then
+      pass "claude-update: $HOME/bin/claude-auto-update, $line"
+    else
+      pass "claude-update: $HOME/bin/claude-auto-update (no LaunchAgent loaded)"
+    fi
+  elif systemctl --user list-unit-files claude-auto-update.timer >/dev/null 2>&1 \
      && systemctl --user list-unit-files claude-auto-update.timer 2>/dev/null | grep -q claude-auto-update.timer; then
     state="$(systemctl --user is-active claude-auto-update.timer 2>/dev/null)"
     pass "claude-update: $HOME/bin/claude-auto-update, timer $state"

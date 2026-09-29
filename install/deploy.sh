@@ -15,6 +15,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/portable.sh"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 
 # The MAIN checkout is always the first entry `git worktree list` reports,
@@ -95,7 +96,7 @@ fi
 # or half-written by a concurrently running hook/daemon. -----------------
 TMP_LINK="$AIRLOCK_HOME/.current.tmp.$$"
 ln -sfn "$RELEASE_DIR" "$TMP_LINK"
-mv -T "$TMP_LINK" "$AIRLOCK_HOME/current"
+airlock_replace_link "$TMP_LINK" "$AIRLOCK_HOME/current"
 
 echo "deploy.sh: current -> $RELEASE_DIR" >&2
 
@@ -103,7 +104,8 @@ echo "deploy.sh: current -> $RELEASE_DIR" >&2
 # delete the one `current` points at even if clock skew put it out of
 # the newest-N window. ---------------------------------------------------
 CURRENT_REAL="$(readlink -f "$AIRLOCK_HOME/current")"
-mapfile -t ALL_RELEASES < <(ls -1t "$RELEASES_DIR" 2>/dev/null | grep -v '^\.export-')
+ALL_RELEASES=()
+while IFS= read -r _release; do ALL_RELEASES+=("$_release"); done < <(ls -1t "$RELEASES_DIR" 2>/dev/null | grep -v '^\.export-')
 if [ "${#ALL_RELEASES[@]}" -gt "$KEEP_RELEASES" ]; then
   for old in "${ALL_RELEASES[@]:$KEEP_RELEASES}"; do
     old_path="$RELEASES_DIR/$old"
