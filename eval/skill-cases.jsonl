@@ -1,0 +1,38 @@
+{"id": "skill-01", "prompt": "Make a brand new slide deck, 8 slides, introducing our warehouse robot to new customers", "expected": "pptx-author", "note": "new deck vs edit"}
+{"id": "skill-02", "prompt": "In quarterly-review.pptx, replace the old logo on every slide and delete slide 7", "expected": "pptx-edit", "note": "edit vs new deck"}
+{"id": "skill-03", "prompt": "Build a workbook that tracks battery cycles per robot with a formula for average depth of discharge", "expected": "xlsx", "note": ""}
+{"id": "skill-04", "prompt": "Fill in the vendor onboarding form fields in onboarding.pdf with our company details", "expected": "pdf", "note": ""}
+{"id": "skill-05", "prompt": "Turn my meeting notes into a Word document with a table of action items", "expected": "docx", "note": ""}
+{"id": "skill-06", "prompt": "Write a launch file that starts the lidar driver and slam_toolbox with parameters from a YAML file", "expected": "ros2-launch", "note": ""}
+{"id": "skill-07", "prompt": "I keep getting 'Lookup would require extrapolation into the future' between base_link and odom", "expected": "ros2-tf", "note": ""}
+{"id": "skill-08", "prompt": "Set up a Gazebo world with a warehouse floor and spawn our diff-drive robot with a lidar", "expected": "gazebo-sim", "note": ""}
+{"id": "skill-09", "prompt": "Commit the staged changes with a proper message", "expected": "git-commit", "note": ""}
+{"id": "skill-10", "prompt": "Review the changes on the feature/arbiter branch and tell me what could break", "expected": "pr-review", "note": ""}
+{"id": "skill-11", "prompt": "Build the rate limiter test-first, starting with a failing test for the burst case", "expected": "tdd", "note": ""}
+{"id": "skill-12", "prompt": "test_localization.py fails with a KeyError deep inside the particle filter, find out why", "expected": "debug-python", "note": ""}
+{"id": "skill-13", "prompt": "The docker build takes 12 minutes and the image is 3 GB, make it smaller and faster", "expected": "docker", "note": ""}
+{"id": "skill-14", "prompt": "The api pod is in CrashLoopBackOff after the last helm upgrade", "expected": "k8s-deploy", "note": ""}
+{"id": "skill-15", "prompt": "terraform plan wants to destroy and recreate the database after I renamed the module", "expected": "terraform", "note": ""}
+{"id": "skill-16", "prompt": "This report query takes 40 seconds, here is the EXPLAIN output, speed it up", "expected": "sql-query", "note": ""}
+{"id": "skill-17", "prompt": "Every RFID asset tag comes out of the printer marked VOID", "expected": "label-printer", "note": ""}
+{"id": "skill-18", "prompt": "Find a 30 minute slot with the controls team next week and send them an invite", "expected": "calendar", "note": ""}
+{"id": "skill-19", "prompt": "Reply to the vendor's email with the signed quote attached", "expected": "email-draft", "note": ""}
+{"id": "skill-20", "prompt": "Post the release announcement in the engineering channel on Slack", "expected": "slack-post", "note": ""}
+{"id": "skill-21", "prompt": "Open a bug ticket for the odometry drift and put it in the current sprint", "expected": "jira", "note": ""}
+{"id": "skill-22", "prompt": "Draw the data flow from the lidar through localization to the command arbiter", "expected": "diagram", "note": ""}
+{"id": "skill-23", "prompt": "Restyle the fleet dashboard page so it looks polished instead of default bootstrap", "expected": "frontend-design", "note": ""}
+{"id": "skill-24", "prompt": "Scrape every product listing from the supplier's catalogue site into a CSV", "expected": "web-scrape", "note": ""}
+{"id": "skill-25", "prompt": "Plot motor current against time for each wheel from this CSV", "expected": "data-viz", "note": ""}
+{"id": "skill-26", "prompt": "Check the auth service for injection bugs and hard-coded secrets", "expected": "security-audit", "note": ""}
+{"id": "skill-27", "prompt": "Write the changelog for v2.3 from the commits since the v2.2 tag", "expected": "release-notes", "note": ""}
+{"id": "skill-28", "prompt": "Upgrade all our npm packages and fix whatever breaks", "expected": "dependency-upgrade", "note": ""}
+{"id": "skill-29", "prompt": "Explain the difference between a mutex and a semaphore", "expected": null, "note": "conceptual, prose suffices"}
+{"id": "skill-30", "prompt": "What is the time complexity of building a heap from an unsorted array", "expected": null, "note": "conceptual"}
+{"id": "skill-31", "prompt": "Why do particle filters suffer from sample impoverishment", "expected": null, "note": "conceptual robotics"}
+{"id": "skill-32", "prompt": "Write me a haiku about autonomous forklifts", "expected": null, "note": "creative, no skill"}
+{"id": "skill-33", "prompt": "Summarise the tradeoffs between REST and gRPC for internal services", "expected": null, "note": "advice, prose suffices"}
+{"id": "skill-34", "prompt": "Post this announcement to my Mastodon account", "expected": null, "note": "near miss: slack-post is the wrong network"}
+{"id": "skill-35", "prompt": "Book me a flight to Denver for Tuesday morning", "expected": null, "note": "no travel skill"}
+{"id": "skill-36", "prompt": "Translate this paragraph into Spanish for the customer", "expected": null, "note": "no translation skill"}
+{"id": "skill-37", "prompt": "Rename the variable tmp to scan_buffer in scan_filter.py", "expected": null, "note": "small edit, no skill"}
+{"id": "skill-38", "prompt": "What does the -n flag do in grep", "expected": null, "note": "trivia"}
