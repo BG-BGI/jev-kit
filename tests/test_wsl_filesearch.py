@@ -11,11 +11,12 @@ from airlock import scope as scope_mod
 _ABOVE_BAR_CONFIDENCE = 0.9
 _ABOVE_BAR_MARGIN = 0.6
 
-# Every fixture root here is under /home/alice, matching winpath.py's
-# docstring convention. plocate's home.db covers $HOME and nothing else, so
-# whether /home/alice counts as indexed ground depends on HOME (Codex P1,
+# Every fixture root here is under /Users/alice: a path no symlink rewrites
+# on either OS (on macOS /home is an autofs link, so realpath("/home/alice")
+# is /System/Volumes/Data/home/alice and stops matching HOME). plocate's home.db covers $HOME and nothing else, so
+# whether /Users/alice counts as indexed ground depends on HOME (Codex P1,
 # PR #1: /opt was being reported as plocate's ground). Pin it for the file.
-_HOME = mock.patch.dict(os.environ, {"HOME": "/home/alice"})
+_HOME = mock.patch.dict(os.environ, {"HOME": "/Users/alice"})
 
 
 # The suggestion now depends on what the machine has: Everything's client
@@ -49,7 +50,7 @@ class TestFilenameSearchSuggestionWsl(unittest.TestCase):
 
     def test_wsl_linux_home_root_gets_plocate(self):
         self.assertEqual(
-            policy.filename_search_suggestion(wsl=True, roots=["/home/alice"]),
+            policy.filename_search_suggestion(wsl=True, roots=["/Users/alice"]),
             policy.PLOCATE_SUGGESTION,
         )
 
@@ -60,7 +61,7 @@ class TestFilenameSearchSuggestionWsl(unittest.TestCase):
         # (Codex P1 on PR #1; this test previously asserted the ES-only answer).
         self.assertEqual(
             policy.filename_search_suggestion(
-                wsl=True, roots=["/home/alice", "/mnt/c/Users"],
+                wsl=True, roots=["/Users/alice", "/mnt/c/Users"],
             ),
             policy.ES_WSL_MIXED_SUGGESTION,
         )
@@ -120,7 +121,7 @@ class TestRootIsWindowsHost(unittest.TestCase):
                                                     windows=True))
 
     def test_linux_paths_are_not_windows_host(self):
-        self.assertFalse(policy.root_is_windows_host("/home/alice"))
+        self.assertFalse(policy.root_is_windows_host("/Users/alice"))
         self.assertFalse(policy.root_is_windows_host("/mnt2/c/Users"))
 
     def test_none_and_empty_never_raise(self):
@@ -130,7 +131,7 @@ class TestRootIsWindowsHost(unittest.TestCase):
     def test_any_root_is_windows_host_over_none_list(self):
         self.assertFalse(policy.any_root_is_windows_host(None))
         self.assertFalse(policy.any_root_is_windows_host([]))
-        self.assertTrue(policy.any_root_is_windows_host(["/home/alice", "/mnt/c/Users"]))
+        self.assertTrue(policy.any_root_is_windows_host(["/Users/alice", "/mnt/c/Users"]))
 
 
 class TestCommandAlreadyUsesIndexedSearchWsl(unittest.TestCase):
@@ -162,7 +163,7 @@ class TestEvaluateSearchWsl(unittest.TestCase):
             command='find / -iname "*jev-kit*"',
             root_has_graphify_graph=False,
             margin=_ABOVE_BAR_MARGIN,
-            roots=["/home/alice", "/mnt/c/Users"],
+            roots=["/Users/alice", "/mnt/c/Users"],
             wsl=True,
         )
         self.assertTrue(verdict["would_deny"])
@@ -176,7 +177,7 @@ class TestEvaluateSearchWsl(unittest.TestCase):
             command=command,
             root_has_graphify_graph=False,
             margin=_ABOVE_BAR_MARGIN,
-            roots=["/home/alice", "/mnt/c/Users"],
+            roots=["/Users/alice", "/mnt/c/Users"],
             wsl=True,
         )
 
@@ -219,10 +220,10 @@ class TestEvaluateSearchWsl(unittest.TestCase):
             scope="single_dir",
             search_intent="filename_search",
             confidence=_ABOVE_BAR_CONFIDENCE,
-            command="find /home/alice/notes -name x",
+            command="find /Users/alice/notes -name x",
             root_has_graphify_graph=False,
             margin=_ABOVE_BAR_MARGIN,
-            roots=["/home/alice/notes"],
+            roots=["/Users/alice/notes"],
             wsl=True,
         )
         self.assertFalse(verdict["would_deny"])
@@ -237,7 +238,7 @@ class TestMixedRootsNameBothIndexes(unittest.TestCase):
 
     def test_mixed_roots_get_both_commands(self):
         s = policy.filename_search_suggestion(
-            windows=False, roots=["/home/alice/notes", "/mnt/c/Users"], wsl=True)
+            windows=False, roots=["/Users/alice/notes", "/mnt/c/Users"], wsl=True)
         self.assertIs(s, policy.ES_WSL_MIXED_SUGGESTION)
         self.assertIn("plocate", s)
         self.assertIn("es -path", s)
@@ -251,7 +252,7 @@ class TestMixedRootsNameBothIndexes(unittest.TestCase):
     def test_home_only_roots_still_get_plocate_alone(self):
         self.assertIs(
             policy.filename_search_suggestion(
-                windows=False, roots=["/home/alice", "/home/alice/notes"], wsl=True),
+                windows=False, roots=["/Users/alice", "/Users/alice/notes"], wsl=True),
             policy.PLOCATE_SUGGESTION)
 
     def test_a_linux_root_outside_home_is_not_plocate_ground(self):
@@ -263,7 +264,7 @@ class TestMixedRootsNameBothIndexes(unittest.TestCase):
         # this search never touches (review finding, PR #1).
         self.assertIs(
             policy.filename_search_suggestion(
-                windows=False, roots=["/home/alice", "/opt"], wsl=True),
+                windows=False, roots=["/Users/alice", "/opt"], wsl=True),
             policy.LINUX_MIXED_SUGGESTION)
         self.assertNotIn("es -path", policy.LINUX_MIXED_SUGGESTION)
         # Add a Windows-host root and Everything belongs in the advice.
@@ -276,7 +277,7 @@ class TestMixedRootsNameBothIndexes(unittest.TestCase):
         """`find "$HOME" /mnt/c/Users -name x` -- the real failing call."""
         self.assertIs(
             policy.filename_search_suggestion(
-                windows=False, roots=["/home/alice/notes", "/mnt/c/Users"], wsl=True),
+                windows=False, roots=["/Users/alice/notes", "/mnt/c/Users"], wsl=True),
             policy.ES_WSL_MIXED_SUGGESTION)
 
     def test_any_root_is_linux_side(self):
@@ -315,7 +316,7 @@ class TestWslFsRootSpansBothIndexes(unittest.TestCase):
 
     def test_root_is_wsl_fs_root(self):
         self.assertTrue(policy.root_is_wsl_fs_root("/"))
-        self.assertFalse(policy.root_is_wsl_fs_root("/home/alice"))
+        self.assertFalse(policy.root_is_wsl_fs_root("/Users/alice"))
         self.assertFalse(policy.root_is_wsl_fs_root("/mnt/c"))
         self.assertFalse(policy.root_is_wsl_fs_root(None))
         self.assertFalse(policy.root_is_wsl_fs_root(""))
@@ -350,14 +351,14 @@ class TestPrefilterLetsWindowsHostRootsThrough(unittest.TestCase):
 
     def test_a_linux_side_single_dir_is_still_skipped(self):
         self.assertFalse(policy.deny_possible_bash(
-            "single_dir", "find", False, roots=["/home/alice/notes"], wsl=True))
+            "single_dir", "find", False, roots=["/Users/alice/notes"], wsl=True))
 
     def test_a_plocate_command_that_still_crawls_the_host_is_judged(self):
         # Codex P2, PR #1: the program is plocate, so the prefilter skipped
         # the call, but another stage crawls /mnt/c/Users.
         self.assertTrue(policy.deny_possible_bash(
             "disk_wide", "plocate", False,
-            roots=["/home/alice", "/mnt/c/Users"], wsl=True))
+            roots=["/Users/alice", "/mnt/c/Users"], wsl=True))
 
     def test_an_es_command_is_still_skipped(self):
         self.assertFalse(policy.deny_possible_bash(
@@ -385,7 +386,7 @@ class TestTheAdviceMatchesTheMachine(unittest.TestCase):
 
     def test_no_plocate_database_means_no_deny_on_plain_linux(self):
         self.assertIsNone(policy.filename_search_suggestion(
-            windows=False, roots=["/home/alice"], wsl=False, db_kind=None,
+            windows=False, roots=["/Users/alice"], wsl=False, db_kind=None,
             has_es=False))
 
     def test_a_system_database_names_itself_and_covers_the_linux_side(self):
@@ -414,7 +415,7 @@ class TestTheAdviceMatchesTheMachine(unittest.TestCase):
         self.assertTrue(policy.root_is_plocate_covered(
             "/opt", db_kind="system-locate"))
         self.assertFalse(policy.root_is_plocate_covered(
-            "/opt", home="/home/alice", db_kind="home-locate"))
+            "/opt", home="/Users/alice", db_kind="home-locate"))
 
     def test_probes_do_not_depend_on_what_this_host_has_installed(self):
         # The generated policy and its pinned fingerprint must read the same
@@ -425,7 +426,7 @@ class TestTheAdviceMatchesTheMachine(unittest.TestCase):
                                   lambda *a, **k: False):
             self.assertEqual(
                 policy.filename_search_suggestion(
-                    windows=False, roots=["/home/alice"], wsl=False),
+                    windows=False, roots=["/Users/alice"], wsl=False),
                 policy.PLOCATE_SUGGESTION)
             verdict = policy.evaluate_search(
                 scope="disk_wide", search_intent="filename_search",
@@ -530,7 +531,7 @@ class TestTheAdviceMatchesTheMachine(unittest.TestCase):
         # line covers only Linux paths outside $HOME, so following it drops
         # the home-side results.
         self.assertIsNone(policy.filename_search_suggestion(
-            windows=False, roots=["/home/alice", "/mnt/c/Users"], wsl=True,
+            windows=False, roots=["/Users/alice", "/mnt/c/Users"], wsl=True,
             db_kind=None, has_es=True))
         self.assertIsNone(policy.filename_search_suggestion(
             windows=False, roots=["/"], wsl=True,
@@ -695,9 +696,9 @@ class TestTheAdviceMatchesTheMachine(unittest.TestCase):
             policy.evaluate_search(
                 scope="disk_wide", search_intent="filename_search",
                 confidence=_ABOVE_BAR_CONFIDENCE,
-                command="find /home/alice -name x",
+                command="find /Users/alice -name x",
                 root_has_graphify_graph=False, margin=_ABOVE_BAR_MARGIN,
-                roots=["/home/alice"], wsl=True,
+                roots=["/Users/alice"], wsl=True,
                 db_kind="home", has_es=True)
         self.assertEqual(probes, [])
 
@@ -745,8 +746,9 @@ class TestASymlinkOutOfHomeIsWindowsGround(unittest.TestCase):
         import tempfile
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.link = os.path.join(self.tmp.name, "vault")
-        self.target = os.path.join(self.tmp.name, "mnt_c_target")
+        base = os.path.realpath(self.tmp.name)
+        self.link = os.path.join(base, "vault")
+        self.target = os.path.join(base, "mnt_c_target")
         os.makedirs(self.target)
         os.symlink(self.target, self.link)
 
@@ -1022,7 +1024,7 @@ class IndexedInvocationMustCoverTheRoot(unittest.TestCase):
     def test_plocate_help_does_not_count_as_a_search(self):
         self.assertTrue(policy.evaluate_search(
             command='find "$HOME" -name x; plocate -h',
-            roots=["/home/alice"], scope="disk_wide",
+            roots=["/Users/alice"], scope="disk_wide",
             search_intent="filename_search", confidence=0.99, margin=0.9,
             root_has_graphify_graph=False, wsl=True)["would_deny"])
 
@@ -1031,7 +1033,7 @@ class IndexedInvocationMustCoverTheRoot(unittest.TestCase):
         # so the pattern itself is not correlated.
         self.assertFalse(policy.evaluate_search(
             command='find "$HOME" -name x; plocate -i pattern',
-            roots=["/home/alice"], scope="disk_wide",
+            roots=["/Users/alice"], scope="disk_wide",
             search_intent="filename_search", confidence=0.99, margin=0.9,
             root_has_graphify_graph=False, wsl=True)["would_deny"])
 

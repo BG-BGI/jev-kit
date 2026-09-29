@@ -25,6 +25,32 @@ for arg in "$@"; do
   esac
 done
 
+# macOS: Spotlight already keeps a live index of every local volume, so there
+# is nothing to build and nothing to schedule. Check it is on, say how to
+# query it, and stop.
+if [ "$(uname -s)" = "Darwin" ]; then
+  if ! command -v mdfind >/dev/null 2>&1; then
+    echo "filesearch: mdfind not found; Spotlight is the filename index on macOS." >&2
+    exit 1
+  fi
+  STATE="$(mdutil -s /System/Volumes/Data 2>/dev/null | tail -1 || true)"
+  case "$STATE" in
+    *"Indexing enabled"*) echo "filesearch: Spotlight indexing is enabled; nothing to install." ;;
+    *) echo "filesearch: Spotlight indexing does not report enabled ($STATE)." >&2
+       echo "  Turn it on with:  sudo mdutil -i on /System/Volumes/Data" >&2
+       exit 1 ;;
+  esac
+  echo
+  echo "Query it with:"
+  echo "    mdfind -onlyin \"\$HOME\" -name '<pattern>' 2>/dev/null"
+  echo "  Spotlight skips hidden directories (~/.config, .git) and most system"
+  echo "  paths; those still need a bounded find."
+  echo
+  echo "Tell the agent about it: paste filesearch/CLAUDE.md.snippet into the"
+  echo "machine's CLAUDE.md. An index nothing is told about gets used by nothing."
+  exit 0
+fi
+
 if ! command -v updatedb >/dev/null 2>&1 || ! command -v plocate >/dev/null 2>&1; then
   echo "filesearch: plocate is not installed." >&2
   echo "  Install it as a named system package, then re-run:" >&2

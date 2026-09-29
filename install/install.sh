@@ -20,6 +20,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/portable.sh"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Machine-specific values live in install/config.env (gitignored). Nothing in
@@ -51,10 +52,12 @@ Components (default: --guard --session-check --daemon --monitoring
                  start a session, when the guard is not judging anything.
                  On by default; --no-session-check leaves it out
   --no-session-check  do not register the SessionStart entry
-  --daemon       the warm-connection daemon (systemd user unit)
+  --daemon       the warm-connection daemon (systemd user unit; a
+                 LaunchAgent on macOS)
   --tuning       the unattended tuning timer
   --monitoring   the five-minute health check timer
-  --filesearch   the per-user plocate index and its hourly timer
+  --filesearch   the per-user plocate index and its hourly timer (on macOS:
+                 checks Spotlight, which is already the index)
   --browser      sync the vendored browser-use/jev-ultrafast environment
   --browse-mcp   check the 'browse' MCP server over that clone and print
                  (never apply) the mcpServers block for ~/.claude.json
@@ -83,6 +86,9 @@ Options:
 
 On WSL without systemd, --no-systemd is selected automatically and the script
 prints how to turn systemd on if you want the timers.
+
+On macOS the same unit files are translated into LaunchAgents in
+~/Library/LaunchAgents by install/launchd.py; --no-systemd skips those too.
 EOF
   exit "${1:-0}"
 }
@@ -182,12 +188,25 @@ else
   fail "python3 >= 3.10 not found; the guard is pure stdlib Python and needs it"
 fi
 
-# systemd user session
+# systemd user session (launchd on macOS)
 SYSTEMD_OK=0
-: "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
-export XDG_RUNTIME_DIR
+SCHEDULER=systemd
+if airlock_is_macos; then
+  SCHEDULER=launchd
+else
+  : "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+  export XDG_RUNTIME_DIR
+fi
 if [ "$NO_SYSTEMD" = "1" ]; then
   warn "systemd: skipped (--no-systemd)"
+elif [ "$SCHEDULER" = "launchd" ]; then
+  if command -v launchctl >/dev/null 2>&1; then
+    SYSTEMD_OK=1
+    ok "launchd (macOS): units are installed as LaunchAgents in ~/Library/LaunchAgents"
+  else
+    NO_SYSTEMD=1
+    warn "macOS but no launchctl; degrading to no-scheduler mode"
+  fi
 elif command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
   SYSTEMD_OK=1
   ok "systemd user session reachable (XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR)"
@@ -220,7 +239,16 @@ EOF
   fi
 fi
 
-if command -v plocate >/dev/null 2>&1 && command -v updatedb >/dev/null 2>&1; then
+if [ "$SCHEDULER" = "launchd" ]; then
+  if command -v mdfind >/dev/null 2>&1; then
+    ok "mdfind present (Spotlight is the filename index on macOS)"
+  elif [ "$FILESEARCH_EXPLICIT" = "1" ]; then
+    fail "mdfind not found -- needed for --filesearch on macOS"
+  else
+    WANT_FILESEARCH=0
+    warn "mdfind not found; skipping filesearch"
+  fi
+elif command -v plocate >/dev/null 2>&1 && command -v updatedb >/dev/null 2>&1; then
   ok "plocate present"
 elif [ "$FILESEARCH_EXPLICIT" = "1" ]; then
   fail "plocate not installed (sudo apt install plocate) -- needed for --filesearch"
@@ -320,7 +348,7 @@ plan "$WANT_CLAUDE_UPDATE" "claude-update"
 plan "$WANT_BELAY" "belay"
 plan "$WANT_COMPACTION" "compaction"
 echo "   AIRLOCK_HOME=$AIRLOCK_HOME"
-echo "   systemd: $([ "$NO_SYSTEMD" = "1" ] && echo "no (timers and units skipped)" || echo yes)"
+echo "   $SCHEDULER: $([ "$NO_SYSTEMD" = "1" ] && echo "no (timers and units skipped)" || echo yes)"
 
 if [ "$CHECK_ONLY" = "1" ]; then
   echo
@@ -329,8 +357,12 @@ if [ "$CHECK_ONLY" = "1" ]; then
 fi
 
 # --- helpers ----------------------------------------------------------------
+# On macOS a unit is not copied anywhere: install/launchd.py reads the
+# .service (and the .timer beside it, if any) and writes the LaunchAgent.
 install_unit() {
   local src="$1" name="$2"
+  UNIT_SRC_DIR="$(dirname "$src")"
+  [ "$SCHEDULER" = "launchd" ] && return 0
   mkdir -p "$UNIT_DIR"
   install -m 644 "$src" "$UNIT_DIR/$name"
   ok "unit $name -> $UNIT_DIR"
@@ -340,6 +372,17 @@ enable_unit() {
   local name="$1"
   if [ "$NO_SYSTEMD" = "1" ]; then
     warn "not enabling $name (no systemd)"
+    return 0
+  fi
+  if [ "$SCHEDULER" = "launchd" ]; then
+    local base="${name%.*}" service timer=""
+    service="$UNIT_SRC_DIR/$base.service"
+    [ -f "$UNIT_SRC_DIR/$base.timer" ] && timer="$UNIT_SRC_DIR/$base.timer"
+    if "$PY" "$SCRIPT_DIR/launchd.py" install "$service" ${timer:+"$timer"} --python "$PY" >/dev/null; then
+      ok "loaded LaunchAgent com.jev-kit.$base (log: ~/Library/Logs/jev-kit/$base.log)"
+    else
+      warn "could not load com.jev-kit.$base; try: $PY $SCRIPT_DIR/launchd.py install $service $timer"
+    fi
     return 0
   fi
   systemctl --user daemon-reload
@@ -487,7 +530,7 @@ if [ "$WANT_GUARD" = "1" ]; then
     warn "  first install but means a git operation here changes what is live."
     mkdir -p "$AIRLOCK_HOME"
     ln -sfn "$REPO_ROOT" "$AIRLOCK_HOME/.current.tmp.$$"
-    mv -T "$AIRLOCK_HOME/.current.tmp.$$" "$AIRLOCK_HOME/current"
+    airlock_replace_link "$AIRLOCK_HOME/.current.tmp.$$" "$AIRLOCK_HOME/current"
     ok "current -> $REPO_ROOT"
   fi
 
@@ -578,7 +621,7 @@ EOF
     [ "$WANT_BELAY" = "1" ] && WIRE_EXTRA_FLAGS+=("--belay")
     [ "$WANT_SESSION_CHECK" = "1" ] || WIRE_EXTRA_FLAGS+=("--no-session-check")
     AIRLOCK_HOME="$AIRLOCK_HOME" JEV_HOME="$AIRLOCK_HOME" AIRLOCK_PYTHON3="$PY" \
-      "$SCRIPT_DIR/wire.sh" --apply "${WIRE_EXTRA_FLAGS[@]}" "${WIRE_FILES[@]}"
+      "$SCRIPT_DIR/wire.sh" --apply ${WIRE_EXTRA_FLAGS[@]+"${WIRE_EXTRA_FLAGS[@]}"} "${WIRE_FILES[@]}"
   else
     echo "   No --wire given, so no settings.json was touched. To preview an edit"
     echo "   to an existing entry:"

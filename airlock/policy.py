@@ -10,7 +10,7 @@ import shlex
 from pathlib import Path
 
 from . import tiers, winpath
-from .platform_compat import is_windows
+from .platform_compat import is_macos, is_windows
 
 CONFIDENCE_THRESHOLD = 0.8
 MARGIN_THRESHOLD = 0.4
@@ -587,6 +587,12 @@ _AVAILABILITY_CACHE = {}
 SYSTEM_PLOCATE_DB = "/var/lib/plocate/plocate.db"
 #: The $HOME-only database this kit's own filesearch timer builds.
 HOME_PLOCATE_DB = "~/.cache/plocate/home.db"
+#: macOS: Spotlight is the index, kept live by the OS. It covers $HOME but
+#: skips hidden directories, so a root with a dot-component is not its ground.
+SPOTLIGHT_KIND = "spotlight"
+SPOTLIGHT_COMMAND = "mdfind -onlyin <dir> -name '<pattern>' 2>/dev/null"
+#: Programs that already answer from an index rather than walking a tree.
+_INDEXED_LOCATORS = ("locate", "plocate", "mdfind")
 
 
 def reset_availability_cache():
@@ -664,6 +670,9 @@ def plocate_db_kind():
       replacement to offer for a Linux-side root, and offering one anyway
       produces a deny whose suggestion fails with "no such file".
 
+    - "spotlight": macOS with `mdfind` and no plocate home database.
+      Spotlight's live index answers for $HOME minus hidden directories.
+
     The home database wins when both exist, because it is the one this kit
     installs and keeps current.
     """
@@ -681,6 +690,8 @@ def plocate_db_kind():
                     kind = "home" if exe == "plocate" else "home-locate"
                 elif os.path.exists(SYSTEM_PLOCATE_DB):
                     kind = "system" if exe == "plocate" else "system-locate"
+            if kind is None and is_macos() and _tool_on_path("mdfind"):
+                kind = SPOTLIGHT_KIND
         except Exception:
             kind = None
         _AVAILABILITY_CACHE[key] = kind
@@ -695,6 +706,8 @@ def plocate_command(db_kind=None):
     a command it cannot run (Codex P2, PR #1). `locate` takes the same -d
     and -i flags, so only the program name differs."""
     kind = db_kind if db_kind is not None else plocate_db_kind()
+    if kind == SPOTLIGHT_KIND:
+        return SPOTLIGHT_COMMAND
     exe = "locate" if str(kind or "").endswith("-locate") else "plocate"
     if str(kind or "").startswith("home"):
         return "%s -d %s -i '<pattern>'" % (exe, HOME_PLOCATE_DB)
@@ -852,7 +865,11 @@ def root_is_plocate_covered(root, home=None, db_kind=None):
         base = os.path.normpath(home or os.path.expanduser("~"))
     except Exception:
         return False
-    return r == base or r.startswith(base.rstrip("/") + "/")
+    inside = r == base or r.startswith(base.rstrip("/") + "/")
+    if inside and kind == SPOTLIGHT_KIND:
+        return not any(part.startswith(".")
+                       for part in r[len(base):].split("/") if part)
+    return inside
 
 
 def any_root_is_plocate_covered(roots, home=None, db_kind=None):
@@ -984,7 +1001,7 @@ def filename_search_suggestion(windows=None, roots=None, wsl=None,
     return plocate_line
 
 
-_LOCATE_RE = re.compile(r"(?<![A-Za-z0-9_])(plocate|locate)(?![A-Za-z0-9_])")
+_LOCATE_RE = re.compile(r"(?<![A-Za-z0-9_])(plocate|locate|mdfind)(?![A-Za-z0-9_])")
 # `es` and `es.exe`, in COMMAND POSITION only: at the start, or straight after
 # a shell separator. Two letters would otherwise match inside any word, and a
 # plain-whitespace prefix was too loose -- it also matched `es` as an argument,
@@ -1029,7 +1046,7 @@ def _invokes_program(command, names):
     text = command or ""
     if wanted & {"es", "es.exe"} and _ES_RE.search(text):
         return True
-    if wanted & {"locate", "plocate"} and _LOCATE_RE.search(text):
+    if wanted & {"locate", "plocate", "mdfind"} and _LOCATE_RE.search(text):
         return True
     return False
 
@@ -1156,7 +1173,7 @@ def _locate_is_a_real_search(command):
     Its index covers the same ground whatever pattern is asked for, so the
     pattern itself is not correlated -- that would be guessing at what the
     author meant to find."""
-    for tokens in _indexed_segments(command, ("locate", "plocate")):
+    for tokens in _indexed_segments(command, _INDEXED_LOCATORS):
         if _is_a_real_search(tokens):
             return True
     return False
@@ -1176,7 +1193,7 @@ def _command_position_is_locate(command):
     filename pattern. Matching it anywhere in the text concluded that both
     indexes were present and left the Linux-side crawl unsteered (Codex P2,
     PR #1)."""
-    return _invokes_program(command, ("locate", "plocate"))
+    return _invokes_program(command, _INDEXED_LOCATORS)
 
 
 def command_already_uses_locate(command):
@@ -1345,7 +1362,7 @@ def evaluate_search(scope, search_intent, confidence, command, root_has_graphify
 # of a corpus consisting only of already-flagged cases.
 
 GREP_LIKE_PROGRAMS = {"grep", "egrep", "fgrep", "rg", "ag", "ack"}
-SKIP_LOCATE_FAMILY = {"locate", "plocate", "es"}
+SKIP_LOCATE_FAMILY = {"locate", "plocate", "mdfind", "es"}
 DEFAULT_SAMPLE_RATE = 0.05
 SAMPLE_RATE_ENV = "AIRLOCK_SAMPLE_RATE"
 SAMPLE_RATE_ENV_LEGACY = ("PLUMBLINE_SAMPLE_RATE", "JEV_GUARD_SAMPLE_RATE")

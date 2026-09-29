@@ -58,6 +58,17 @@ def is_windows(windows=None, platform=None):
         return False
 
 
+def is_macos(macos=None, platform=None):
+    """True on macOS. Same injection contract as is_windows: `macos` forces
+    the answer, `platform` forces the `sys.platform` string. Never raises."""
+    if macos is not None:
+        return bool(macos)
+    try:
+        return (platform if platform is not None else sys.platform) == "darwin"
+    except Exception:
+        return False
+
+
 def has_unix_sockets(windows=None, platform=None):
     """Can this machine speak to the warm daemon at all?
 

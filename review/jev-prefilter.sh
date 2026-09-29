@@ -16,6 +16,7 @@
 # Python or shell repository it will find little or nothing, and this script
 # says so in the note rather than pretending otherwise.
 set -uo pipefail
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../install/portable.sh"
 
 REPO="${AIRLOCK_REVIEW_TARGET:-$PWD}"
 REVIEW_DIR="${AIRLOCK_REVIEW_DIR:-$HOME/code/jev-review}"
@@ -76,7 +77,7 @@ run_review() {
   fi
 
   raw="$(cd "$REVIEW_DIR" && PATH="$node_bin:$PATH" \
-        timeout "$TIMEOUT_S" npm run --silent review:changes -- "$REPO" 2>/dev/null)" || {
+        airlock_timeout "$TIMEOUT_S" npm run --silent review:changes -- "$REPO" 2>/dev/null)" || {
     warn "review:changes failed or timed out after ${TIMEOUT_S}s"
     return 1
   }

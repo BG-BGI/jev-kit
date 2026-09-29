@@ -18,7 +18,7 @@ airlock_repo_path_trusted_file() {
   local p="$1" info uid mode
   [ -f "$p" ] || return 1
   [ -L "$p" ] && return 1
-  info="$(stat -c '%u %a' "$p" 2>/dev/null)" || return 1
+  info="$(stat -c '%u %a' "$p" 2>/dev/null || stat -f '%u %Lp' "$p" 2>/dev/null)" || return 1
   uid="${info%% *}"
   mode="${info##* }"
   [ "$uid" = "$(id -u)" ] || return 1
@@ -31,7 +31,7 @@ airlock_repo_path_trusted_file() {
 airlock_repo_path_trusted_dir() {
   local p="$1" info uid mode
   [ -d "$p" ] || return 1
-  info="$(stat -c '%u %a' "$p" 2>/dev/null)" || return 1
+  info="$(stat -c '%u %a' "$p" 2>/dev/null || stat -f '%u %Lp' "$p" 2>/dev/null)" || return 1
   uid="${info%% *}"
   mode="${info##* }"
   [ "$uid" = "$(id -u)" ] || return 1

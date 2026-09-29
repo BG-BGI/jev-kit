@@ -32,8 +32,10 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-: "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
-export XDG_RUNTIME_DIR
+if [ "$(uname -s)" != "Darwin" ]; then
+  : "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+  export XDG_RUNTIME_DIR
+fi
 
 mkdir -p "$BIN_DIR"
 install -m 755 "$SCRIPT_DIR/claude-auto-update" "$BIN_DIR/claude-auto-update"
@@ -44,7 +46,16 @@ if [ "$NO_SYSTEMD" = "0" ] && command -v systemctl >/dev/null 2>&1 && systemctl 
   SYSTEMD_OK=1
 fi
 
-if [ "$SYSTEMD_OK" = "1" ]; then
+if [ "$NO_SYSTEMD" = "0" ] && [ "$(uname -s)" = "Darwin" ]; then
+  PY="${AIRLOCK_PYTHON3:-python3}"
+  if "$PY" "$SCRIPT_DIR/../install/launchd.py" install \
+      "$SCRIPT_DIR/claude-auto-update.service" "$SCRIPT_DIR/claude-auto-update.timer" \
+      --python "$PY" >/dev/null; then
+    echo "claude-update: loaded LaunchAgent com.jev-kit.claude-auto-update (hourly, on the hour)"
+  else
+    echo "claude-update: could not load the LaunchAgent; see install/launchd.py" >&2
+  fi
+elif [ "$SYSTEMD_OK" = "1" ]; then
   mkdir -p "$UNIT_DIR"
   install -m 644 "$SCRIPT_DIR/claude-auto-update.service" "$UNIT_DIR/claude-auto-update.service"
   install -m 644 "$SCRIPT_DIR/claude-auto-update.timer" "$UNIT_DIR/claude-auto-update.timer"
