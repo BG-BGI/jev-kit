@@ -149,6 +149,14 @@ class TestSkipReason(unittest.TestCase):
                          "slash_command")
         self.assertIsNone(suggest.skip_reason("write a launch file for the lidar"))
 
+    def test_machine_written_turns_are_skipped(self):
+        for text in ("<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>",
+                     '<cross-session-message from="uds:/tmp/x.sock">S14 DONE: all green</cross-session-message>',
+                     "<system-reminder>\nsomething long enough to count as words\n</system-reminder>",
+                     "<bash-input>make check-agent now please</bash-input>"):
+            self.assertEqual(suggest.skip_reason(text), "machine_message", text[:30])
+        self.assertIsNone(suggest.skip_reason("1.\n\n<pasted_content>the repo says 0.2 s</pasted_content>"))
+
 
 class TestRecipe(unittest.TestCase):
     def test_suggests_the_rerank_winner(self):
@@ -176,9 +184,22 @@ class TestRecipe(unittest.TestCase):
         self.assertIsNone(result["skill"])
         self.assertEqual(result["reason"], "nothing_fits")
 
-    def test_a_winner_outside_the_roster_is_refused(self):
-        ask = FakeAsk(ranking={"pptx": 0.9}, winner="not-a-skill", fits={"pptx": 0.9})
+    def test_the_suggested_skill_must_clear_the_bar_itself(self):
+        self.assertEqual(suggest.pick("a", {"a": 0.8, "b": 0.9}), "a")
+        self.assertEqual(suggest.pick("a", {"a": 0.4, "b": 0.6}), "b")
+        self.assertIsNone(suggest.pick("a", {"a": 0.2, "b": 0.45}))
+        self.assertIsNone(suggest.pick("a", {}))
+
+    def test_a_weak_winner_is_not_suggested(self):
+        ask = FakeAsk(ranking={"pptx": 0.9, "tdd": 0.1}, winner="pptx",
+                      fits={"pptx": 0.4, "tdd": 0.2})
+        self.assertEqual(suggest.suggest("x y z w", ROSTER, ask)["reason"], "nothing_fits")
+
+    def test_a_winner_outside_the_roster_is_never_suggested(self):
+        ask = FakeAsk(ranking={"pptx": 0.9}, winner="not-a-skill", fits={"pptx": 0.2})
         self.assertIsNone(suggest.suggest("x y z w", ROSTER, ask)["skill"])
+        ask = FakeAsk(ranking={"pptx": 0.9}, winner="not-a-skill", fits={"pptx": 0.9})
+        self.assertEqual(suggest.suggest("x y z w", ROSTER, ask)["skill"], "pptx")
 
     def test_empty_roster_never_asks(self):
         ask = FakeAsk()
