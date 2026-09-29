@@ -17,8 +17,8 @@ Two jobs, both idempotent:
      default: they are the only thing
      that lets R11 stand aside when the kit's own `browse` tool has given up
      -- see hooks/airlock_browse_unlock.py), and, opt in per flag, the belay
-     Stop hook, the skill-suggest UserPromptSubmit hook and the
-     function-hooks env var.
+     Stop hook, the skill-suggest UserPromptSubmit hook, the failure-verdict
+     PostToolUseFailure hook and the function-hooks env var.
      Adding necessarily changes the JSON's structure, so this path
      re-serializes the whole file (via json.load/json.dump, which preserves
      existing key order -- Python dicts keep insertion order) rather than
@@ -34,7 +34,8 @@ becoming a JSON re-serializer for that file.
 Reads NEW_HOOK, NEW_HOOK_COMMAND, APPLY, BELAY, BELAY_WRAPPER,
 FUNCTION_HOOKS, SESSION_CHECK, SESSION_CHECK_HOOK, SESSION_CHECK_COMMAND,
 BROWSE_UNLOCK, BROWSE_UNLOCK_HOOK, BROWSE_UNLOCK_COMMAND, SKILL_SUGGEST,
-SKILL_SUGGEST_HOOK and SKILL_SUGGEST_COMMAND from the
+SKILL_SUGGEST_HOOK, SKILL_SUGGEST_COMMAND, FAILURE_VERDICT,
+FAILURE_VERDICT_HOOK and FAILURE_VERDICT_COMMAND from the
 environment (set by wire.sh) and the settings.json paths from argv.
 Never touches a path not given on the command line.
 """
@@ -74,6 +75,12 @@ SKILL_SUGGEST = os.environ.get("SKILL_SUGGEST") == "1"
 SKILL_SUGGEST_HOOK = os.environ.get("SKILL_SUGGEST_HOOK", "")
 SKILL_SUGGEST_COMMAND = os.environ.get("SKILL_SUGGEST_COMMAND", SKILL_SUGGEST_HOOK)
 SKILL_SUGGEST_EVENT = "UserPromptSubmit"
+# The failure verdict is opt in too: it sends the heads of failed calls'
+# errors, redacted, to TypeSafe.
+FAILURE_VERDICT = os.environ.get("FAILURE_VERDICT") == "1"
+FAILURE_VERDICT_HOOK = os.environ.get("FAILURE_VERDICT_HOOK", "")
+FAILURE_VERDICT_COMMAND = os.environ.get("FAILURE_VERDICT_COMMAND", FAILURE_VERDICT_HOOK)
+FAILURE_VERDICT_EVENT = "PostToolUseFailure"
 # The one matcher in the whole file that is not "*". PostToolUse fires after
 # every tool call in the session, and this hook has exactly one tool to say
 # anything about, so the filtering is worth doing before the interpreter
@@ -100,6 +107,8 @@ BROWSE_UNLOCK_TIMEOUT = 5
 # SUGGEST_TIMEOUT_S), plus start-up and the roster read. Past this ceiling
 # Claude Code drops the hook and the turn runs without a suggestion.
 SKILL_SUGGEST_TIMEOUT = 8
+# One Jev request of at most 2 s (hooks/airlock_failure_verdict.py TIMEOUT_S).
+FAILURE_VERDICT_TIMEOUT = 5
 
 # Matches a JSON string value that is (or ends in) a path to airlock.py's
 # hook entry point -- e.g. "$HOME/code/airlock/hooks/airlock.py" or
@@ -260,6 +269,16 @@ def _skill_suggest_ok():
     return bool(SKILL_SUGGEST and SKILL_SUGGEST_HOOK and os.path.isfile(SKILL_SUGGEST_HOOK))
 
 
+def _failure_verdict_block():
+    return {"matcher": "*", "hooks": [
+        {"type": "command", "command": FAILURE_VERDICT_COMMAND,
+         "timeout": FAILURE_VERDICT_TIMEOUT}]}
+
+
+def _failure_verdict_ok():
+    return bool(FAILURE_VERDICT and FAILURE_VERDICT_HOOK and os.path.isfile(FAILURE_VERDICT_HOOK))
+
+
 def _session_check_block():
     return {"matcher": "*", "hooks": [
         {"type": "command", "command": SESSION_CHECK_COMMAND,
@@ -350,6 +369,8 @@ def _fresh_settings():
         data["hooks"]["Stop"] = [_belay_block()]
     if _skill_suggest_ok():
         data["hooks"][SKILL_SUGGEST_EVENT] = [_skill_suggest_block()]
+    if _failure_verdict_ok():
+        data["hooks"].setdefault(FAILURE_VERDICT_EVENT, []).append(_failure_verdict_block())
     if FUNCTION_HOOKS:
         data["env"] = {FUNCTION_HOOKS_ENV_KEY: "1"}
     return data
@@ -389,6 +410,13 @@ def _describe_fresh():
         else:
             lines.append("  %s (skill suggest): SKIPPED, no hook at %s"
                          % (SKILL_SUGGEST_EVENT, SKILL_SUGGEST_HOOK or "<unset>"))
+    if FAILURE_VERDICT:
+        if _failure_verdict_ok():
+            lines.append("  %s (failure verdict): matcher \"*\", command \"%s\", timeout %d"
+                         % (FAILURE_VERDICT_EVENT, FAILURE_VERDICT_COMMAND, FAILURE_VERDICT_TIMEOUT))
+        else:
+            lines.append("  %s (failure verdict): SKIPPED, no hook at %s"
+                         % (FAILURE_VERDICT_EVENT, FAILURE_VERDICT_HOOK or "<unset>"))
     if FUNCTION_HOOKS:
         lines.append("  env.%s = \"1\"" % FUNCTION_HOOKS_ENV_KEY)
     return lines
@@ -496,6 +524,11 @@ def process(path):
     skill_entries = (data.get("hooks") or {}).get(SKILL_SUGGEST_EVENT) or []
     needs_skill_suggest = skill_ok and not _has_command(skill_entries, SKILL_SUGGEST_COMMAND)
 
+    verdict_ok = _failure_verdict_ok()
+    verdict_missing_hook = FAILURE_VERDICT and not verdict_ok
+    verdict_entries = (data.get("hooks") or {}).get(FAILURE_VERDICT_EVENT) or []
+    needs_failure_verdict = verdict_ok and not _has_command(verdict_entries, FAILURE_VERDICT_COMMAND)
+
     needs_function_hooks = FUNCTION_HOOKS and (data.get("env") or {}).get(FUNCTION_HOOKS_ENV_KEY) != "1"
 
     # The SessionStart session check. Two separate questions, deliberately:
@@ -529,7 +562,8 @@ def process(path):
 
     needs_repoint = needs_repoint or needs_repoint_session or needs_repoint_browse
     needs_add = (needs_add_pretooluse or needs_add_session or needs_add_browse
-                 or needs_belay or needs_skill_suggest or needs_function_hooks)
+                 or needs_belay or needs_skill_suggest or needs_failure_verdict
+                 or needs_function_hooks)
 
     if not (needs_repoint or needs_add):
         if matches:
@@ -548,6 +582,9 @@ def process(path):
         if skill_missing_hook:
             print("%s: --skill-suggest given but no hook at %s, skipping %s entry"
                   % (path, SKILL_SUGGEST_HOOK or "<unset>", SKILL_SUGGEST_EVENT))
+        if verdict_missing_hook:
+            print("%s: --failure-verdict given but no hook at %s, skipping %s entry"
+                  % (path, FAILURE_VERDICT_HOOK or "<unset>", FAILURE_VERDICT_EVENT))
         return False
 
     # A pure repoint -- nothing to ADD -- keeps the byte-preserving text
@@ -629,6 +666,12 @@ def process(path):
                         SKILL_SUGGEST_COMMAND):
             actions.append('added %s (skill suggest): matcher "*", command "%s", timeout %d'
                            % (SKILL_SUGGEST_EVENT, SKILL_SUGGEST_COMMAND, SKILL_SUGGEST_TIMEOUT))
+    if needs_failure_verdict:
+        if _append_hook(new_data, FAILURE_VERDICT_EVENT, _failure_verdict_block(),
+                        FAILURE_VERDICT_COMMAND):
+            actions.append('added %s (failure verdict): matcher "*", command "%s", timeout %d'
+                           % (FAILURE_VERDICT_EVENT, FAILURE_VERDICT_COMMAND,
+                              FAILURE_VERDICT_TIMEOUT))
     if needs_function_hooks:
         new_data.setdefault("env", {})[FUNCTION_HOOKS_ENV_KEY] = "1"
         actions.append('set env.%s = "1"' % FUNCTION_HOOKS_ENV_KEY)
@@ -656,6 +699,9 @@ def process(path):
         if skill_missing_hook:
             print("  (--skill-suggest given but no hook at %s, skipping %s entry)"
                   % (SKILL_SUGGEST_HOOK or "<unset>", SKILL_SUGGEST_EVENT))
+        if verdict_missing_hook:
+            print("  (--failure-verdict given but no hook at %s, skipping %s entry)"
+                  % (FAILURE_VERDICT_HOOK or "<unset>", FAILURE_VERDICT_EVENT))
         return True
 
     backup = _backup(path)
@@ -676,6 +722,9 @@ def process(path):
     if skill_missing_hook:
         print("  (--skill-suggest given but no hook at %s, skipping %s entry)"
               % (SKILL_SUGGEST_HOOK or "<unset>", SKILL_SUGGEST_EVENT))
+    if verdict_missing_hook:
+        print("  (--failure-verdict given but no hook at %s, skipping %s entry)"
+              % (FAILURE_VERDICT_HOOK or "<unset>", FAILURE_VERDICT_EVENT))
     return True
 
 

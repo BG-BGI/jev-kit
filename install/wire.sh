@@ -15,8 +15,9 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<EOF
-usage: $0 --print|--apply [--belay] [--skill-suggest] [--function-hooks]
-          [--no-session-check] [--no-browse-unlock] <settings.json> [...]
+usage: $0 --print|--apply [--belay] [--skill-suggest] [--failure-verdict]
+          [--function-hooks] [--no-session-check] [--no-browse-unlock]
+          <settings.json> [...]
 
   --belay            also add the belay Stop hook (matcher "*", command
                      <HOME>/bin/airlock-belay-run, timeout 25) -- only if
@@ -25,6 +26,10 @@ usage: $0 --print|--apply [--belay] [--skill-suggest] [--function-hooks]
                      (<AIRLOCK_HOME>/current/hooks/airlock_skill_suggest.py,
                      timeout 8). Opt in: it sends each judged prompt,
                      redacted, to TypeSafe.
+  --failure-verdict  also add the failure-verdict PostToolUseFailure hook
+                     (<AIRLOCK_HOME>/current/hooks/airlock_failure_verdict.py,
+                     timeout 5). Opt in: it sends the heads of failed calls'
+                     errors, redacted, to TypeSafe.
   --function-hooks   also set env.CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1.
   --session-check    add the SessionStart session check (the default).
   --no-session-check leave the SessionStart entry out.
@@ -52,6 +57,7 @@ esac
 
 BELAY=0
 SKILL_SUGGEST=0
+FAILURE_VERDICT=0
 FUNCTION_HOOKS=0
 # The session check is a DEFAULT component on every platform: the guard fails
 # open, so a dead guard is silent, and on a workstation nothing outside the
@@ -63,6 +69,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --belay) BELAY=1; shift ;;
     --skill-suggest) SKILL_SUGGEST=1; shift ;;
+    --failure-verdict) FAILURE_VERDICT=1; shift ;;
     --function-hooks) FUNCTION_HOOKS=1; shift ;;
     --session-check) SESSION_CHECK=1; shift ;;
     --no-session-check) SESSION_CHECK=0; shift ;;
@@ -102,6 +109,9 @@ BROWSE_UNLOCK_COMMAND="$PY $BROWSE_UNLOCK_HOOK"
 SKILL_SUGGEST_HOOK="$AIRLOCK_HOME/current/hooks/airlock_skill_suggest.py"
 SKILL_SUGGEST_COMMAND="$PY $SKILL_SUGGEST_HOOK"
 
+FAILURE_VERDICT_HOOK="$AIRLOCK_HOME/current/hooks/airlock_failure_verdict.py"
+FAILURE_VERDICT_COMMAND="$PY $FAILURE_VERDICT_HOOK"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 AIRLOCK_HOME="$AIRLOCK_HOME" NEW_HOOK="$NEW_HOOK" NEW_HOOK_COMMAND="$NEW_HOOK_COMMAND" \
@@ -112,4 +122,6 @@ AIRLOCK_HOME="$AIRLOCK_HOME" NEW_HOOK="$NEW_HOOK" NEW_HOOK_COMMAND="$NEW_HOOK_CO
   BROWSE_UNLOCK_COMMAND="$BROWSE_UNLOCK_COMMAND" \
   SKILL_SUGGEST="$SKILL_SUGGEST" SKILL_SUGGEST_HOOK="$SKILL_SUGGEST_HOOK" \
   SKILL_SUGGEST_COMMAND="$SKILL_SUGGEST_COMMAND" \
+  FAILURE_VERDICT="$FAILURE_VERDICT" FAILURE_VERDICT_HOOK="$FAILURE_VERDICT_HOOK" \
+  FAILURE_VERDICT_COMMAND="$FAILURE_VERDICT_COMMAND" \
   python3 "$SCRIPT_DIR/_wire.py" "$@"

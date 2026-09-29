@@ -69,6 +69,10 @@ Components (default: --guard --session-check --daemon --monitoring
   --skill-suggest  the UserPromptSubmit hook that names at most one skill per
                  turn (two Jev requests). Opt in: each judged prompt, redacted,
                  goes to TypeSafe. Implies --guard; wired only with --wire
+  --failure-verdict  the PostToolUseFailure hook that, once failures pile up,
+                 says whether to change approach, look first or ask. Opt in:
+                 failed calls' error heads, redacted, go to TypeSafe. Implies
+                 --guard; wired only with --wire
   --compaction   tamaratran/fast-jev-compaction -- reads compaction/README.md
                  first: it sends far more off the machine than anything else
                  here
@@ -102,6 +106,7 @@ WANT_FILESEARCH=0; WANT_BROWSER=0; WANT_REVIEW=0; WANT_SHIM=0
 WANT_CLAUDE_UPDATE=0; WANT_BELAY=0; WANT_COMPACTION=0
 WANT_BROWSE_MCP=0
 WANT_SKILL_SUGGEST=0
+WANT_FAILURE_VERDICT=0
 # The session check rides with the guard: it is part of the DEFAULT set on
 # every platform and is not one of the flags that makes the default set go
 # away, because a guard installed without it is a guard whose death is silent.
@@ -135,13 +140,14 @@ while [ "$#" -gt 0 ]; do
     # The hook ships inside the guard's release and is wired by the guard
     # step, so asking for it asks for the guard too.
     --skill-suggest) WANT_SKILL_SUGGEST=1; WANT_GUARD=1; ANY_COMPONENT=1; shift ;;
+    --failure-verdict) WANT_FAILURE_VERDICT=1; WANT_GUARD=1; ANY_COMPONENT=1; shift ;;
     --session-check) WANT_SESSION_CHECK=1; shift ;;
     --no-session-check) WANT_SESSION_CHECK=0; shift ;;
     --all)
       WANT_GUARD=1; WANT_DAEMON=1; WANT_TUNING=1; WANT_MONITORING=1
       WANT_FILESEARCH=1; WANT_BROWSER=1; WANT_REVIEW=1; WANT_SHIM=1
       WANT_CLAUDE_UPDATE=1; WANT_BELAY=1; WANT_COMPACTION=1
-      WANT_BROWSE_MCP=1; WANT_SKILL_SUGGEST=1
+      WANT_BROWSE_MCP=1; WANT_SKILL_SUGGEST=1; WANT_FAILURE_VERDICT=1
       FILESEARCH_EXPLICIT=1; ANY_COMPONENT=1; shift ;;
     --headless) HEADLESS_CHOICE=yes; shift ;;
     --no-headless) HEADLESS_CHOICE=no; shift ;;
@@ -355,6 +361,7 @@ plan "$WANT_CLAUDE_UPDATE" "claude-update"
 plan "$WANT_BELAY" "belay"
 plan "$WANT_COMPACTION" "compaction"
 plan "$WANT_SKILL_SUGGEST" "skill-suggest (UserPromptSubmit hook, wired only with --wire)"
+plan "$WANT_FAILURE_VERDICT" "failure-verdict (PostToolUseFailure hook, wired only with --wire)"
 echo "   AIRLOCK_HOME=$AIRLOCK_HOME"
 echo "   $SCHEDULER: $([ "$NO_SYSTEMD" = "1" ] && echo "no (timers and units skipped)" || echo yes)"
 
@@ -628,6 +635,7 @@ EOF
     WIRE_EXTRA_FLAGS=()
     [ "$WANT_BELAY" = "1" ] && WIRE_EXTRA_FLAGS+=("--belay")
     [ "$WANT_SKILL_SUGGEST" = "1" ] && WIRE_EXTRA_FLAGS+=("--skill-suggest")
+    [ "$WANT_FAILURE_VERDICT" = "1" ] && WIRE_EXTRA_FLAGS+=("--failure-verdict")
     [ "$WANT_SESSION_CHECK" = "1" ] || WIRE_EXTRA_FLAGS+=("--no-session-check")
     AIRLOCK_HOME="$AIRLOCK_HOME" JEV_HOME="$AIRLOCK_HOME" AIRLOCK_PYTHON3="$PY" \
       "$SCRIPT_DIR/wire.sh" --apply ${WIRE_EXTRA_FLAGS[@]+"${WIRE_EXTRA_FLAGS[@]}"} "${WIRE_FILES[@]}"
