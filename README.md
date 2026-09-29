@@ -151,6 +151,7 @@ only: no labelled corpus, no measured numbers, no sustained use.
 | **Uses** | | | | |
 | Browser agent | Jev decides each click, or a warm planner does with `plan: true`. Vendored at a pin | no, opt-in | Page state and goals, to the decider you configure | own numbers |
 | Review | A Jev code reviewer at a pin, with a fail-open wrapper | no, opt-in | Diffs, to the gate you configure | no numbers here |
+| Harness | Jev decides each step of a `make check-agent` fix loop; Claude only writes the edits | no | Failed gate output, redacted, to TypeSafe | **experimental** |
 | Document classifier | Two-stage classifier with an escape hatch and a confidence gate | no | Page text, when you call it | **experimental** |
 | Log triage | Redact-first, local-rules-first triage on stdin | no | Redacted lines, once local rules run out | **experimental** |
 | Shim | An OpenAI-shaped HTTP shim over the `claude` CLI | no, opt-in | Whatever you send through it | **experimental** |
@@ -313,6 +314,7 @@ Nothing is extrapolated.
 | `subagent_type` ablation | `task_kind` **did not move**, 30/30 across five rungs | `python3 eval/ablation.py`, 2026-09-19. Thirty cases on five prompts is not a general result |
 | Browser agent, Jev as decider | **9/9** success, **314-486 ms** median decision | `browser/README.md`, 2026-09-19. Sonnet 9/9 at 1.1-1.5 s; Haiku 4/9 at 0.76-2.8 s. n=3 per cell, directional only |
 | Browser agent, Claude cost per run | **0.0008 USD** with Jev against **0.1868 USD** with Sonnet deciding (goal 1) | same sweep. Cost is the CLI's own `total_cost_usd`, never tokens multiplied by a price |
+| Harness, gate-fix loop | **0.0367 USD** a run with Jev deciding, against 0.0571 (Haiku), 0.0773 (Sonnet) and 0.1557 (Opus) with Claude alone, all green | `python3 -m harness.bench`, 2026-09-29, one seed failing five gates in one repository, n=2 per arm (Opus n=1). 36% of the saving holds on the same model |
 | A/B bench, guard against no guard | **zero denies** over 30 sessions | `bench/results/20260919-120344.md`, 2026-09-19, enforce mode, five tasks |
 
 **Read that last row as a backstop, not a tax.** Thirty sessions of ordinary

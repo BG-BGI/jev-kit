@@ -304,6 +304,42 @@ and `FIND` adds a call when it is used.
 eight failures the run left English Wikipedia through an interlanguage link and
 ended on `fr.wikipedia.org`, at Boris Spassky or at Saint Petersburg.
 
+## The Jev-decided harness
+
+`python3 -m harness.bench`, 2026-09-29, one machine (macOS, Claude Code
+2.1.284). The source is a private Python/ROS 2 repository with an eight-gate
+`make check-agent` sweep: ruff lint and format, mypy strict, a comment and
+size guardrail, duplicate code, a dead-code ratchet, the gate inventory and a
+coverage ratchet.
+
+The seed makes three edits to one module: an unused import, unformatted
+arithmetic, and an unannotated parameter with a comment above it. That fails
+five gates: lint, format-check, typecheck, guardrails and deadcode. Every trial
+starts from a fresh copy. Success is one final sweep, run by the bench.
+
+| arm | green | median Claude $ | median Jev $ | median total $ | against Jev | median s |
+|---|---|---|---|---|---|---|
+| **Jev decides, Claude writes** | 2/2 | 0.0365 | 0.00025 | **0.0367** | | 61 |
+| Claude alone, Haiku 4.5 | 2/2 | 0.0571 | | 0.0571 | 1.6x | 53 |
+| Claude alone, Sonnet 5.5 | 2/2 | 0.0773 | | 0.0773 | 2.1x | 52 |
+| Claude alone, Opus 5.5 | 1/1 | 0.1557 | | 0.1557 | 4.2x | 68 |
+
+Both Jev trials took the same path. Round one ran the ruff fixers with no LLM
+at all. Round two made one Haiku call covering the four gates left, round three
+came back green, and the edited module ended byte-identical to the unseeded
+original. Jev read about 6,000 tokens across two requests.
+
+Two things carry the saving, and the table separates them. Against Claude
+alone on the **same** model, Haiku, Jev deciding cost 36% less. That part is
+Jev: fixers run in code, one narrow edit prompt, and no Claude turns spent
+running and reading gates. Against Sonnet and Opus, the rest is Jev choosing
+the cheaper model for the edit. It was also slower, by 8 to 9 seconds: it runs
+the full sweep every round, where Claude reruns what it chooses to.
+
+This is n=2 per arm, on one seed in one repository. What it shows is that the
+split works on a loop whose steps fit a menu. Whether it carries over to open
+coding work, where the next step cannot be listed ahead of time, is untested.
+
 ## Known limits
 
 - **The bench found no denies.** The guard's measured value so far is that it
@@ -327,6 +363,8 @@ ended on `fr.wikipedia.org`, at Boris Spassky or at Saint Petersburg.
 - **`search_intent` is the weaker of the two guards**, at 84.4% on its labelled
   rows with an ECE of 12.6%, against 98.0% and 1.9% for `task_kind`.
 - **`shim/`: PageIndex local indexing works through it, chat does not.**
+- **The harness is measured on one seed in one repository**, n=2 per arm, and
+  only on a loop whose steps fit a menu.
 - **Nothing here is a security control.** It is a cost and hygiene guard that
   fails open by design. A control that depends on an agent choosing to obey it
   is not a control; if something must not happen, restrict it at the platform.
