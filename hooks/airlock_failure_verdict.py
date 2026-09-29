@@ -31,7 +31,9 @@ SWITCHES
   - The kit-wide kill switch wins: AIRLOCK_DISABLE=1 or ~/.config/airlock/disabled.
   - AIRLOCK_FAILURE_VERDICT, else the first word of ~/.config/airlock/failure-verdict:
     on (the default once wired), shadow (judge and log, say nothing), off.
-  - Every judged run is a row in ~/.local/state/airlock/failure-verdict.jsonl.
+  - Every judged run is a row in ~/.local/state/airlock/failure-verdict.jsonl,
+    with the last call and its error head, redacted, so a spoken verdict can
+    be checked against what actually failed.
 """
 import datetime
 import json
@@ -105,6 +107,7 @@ def judge(payload, mode, ask=None):
         "tool_name": payload.get("tool_name"),
         "failures": len(failures),
         "last_call": summary,
+        "last_error": failures[-1].get("error"),
         "mode": mode,
     }
     row.update(result)

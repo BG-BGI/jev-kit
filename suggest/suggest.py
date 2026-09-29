@@ -8,8 +8,8 @@ Two requests per turn:
      the three, `prose_suffices` inverted, under GATE_THRESHOLD suggests
      nothing. Only skills the ranking gave some weight reach the shortlist.
   2. rerank the top SHORTLIST with each skill's full description and the
-     opening of its SKILL.md, plus one `fits::<name>` Noul per candidate. A
-     shortlist whose best fit is under FITS_THRESHOLD suggests nothing.
+     opening of its SKILL.md, plus one `fits::<name>` Noul per candidate. The
+     suggested skill's own fit has to clear FITS_THRESHOLD (see pick()).
 
 Measured there, on 488 requests against Haiku 4.5: wrong skill loads fell
 from 16.8% to 7.3%, and loads when nothing fits from 9.8% to 4.0%.
@@ -28,11 +28,18 @@ SHORTLIST = 3
 # turn nothing fits (python3 -m suggest.eval, 2026-09-29).
 GATE_THRESHOLD = 0.20
 MIN_RANK_PROBABILITY = 0.01
-FITS_THRESHOLD = 0.30
+# The cookbook's fit bar is 0.30, checked against the best fit in the
+# shortlist. On the first live day that let through a winner whose own fit
+# was 0.16, and several in the 0.4s, while every eval winner fit 0.44 or more
+# and every sound live one 0.53 or more. So the bar is 0.50, and it is the
+# suggested skill's own fit that has to clear it (see pick()).
+FITS_THRESHOLD = 0.50
 WIDE_DESCRIPTION_CHARS = 250
 MAX_CHOICE_OPTIONS = 250
 MIN_WORDS = 4
 MODEL = "jev-latest"
+MACHINE_PREFIXES = ("<task-notification>", "<cross-session-message", "<system-reminder>",
+                    "<local-command-stdout>", "<bash-input>", "<bash-stdout>")
 
 CHOICE_INSTRUCTIONS = (
     "Which of these skills, if any, is the right one to load to help with the "
@@ -72,7 +79,10 @@ def skip_reason(prompt):
 
     A slash command already names its skill, a `!` line is a shell command,
     and a turn of a few words ("2", "commit it") leans on context the
-    request alone does not carry, so ranking it would be a guess."""
+    request alone does not carry, so ranking it would be a guess. A turn
+    Claude Code or another session wrote (a background task finishing, a
+    cross-session message) is nobody's request: on the first live day those
+    were 9 of 14 judged turns, each drawing a suggestion it did not need."""
     text = (prompt or "").strip()
     if not text:
         return "empty"
@@ -82,6 +92,8 @@ def skip_reason(prompt):
         return "shell"
     if "<command-name>" in text:
         return "slash_command"
+    if text.startswith(MACHINE_PREFIXES):
+        return "machine_message"
     if len(text.split()) < MIN_WORDS:
         return "too_short"
     return None
@@ -197,11 +209,26 @@ def suggest(prompt, roster, ask, timeout_s=2.0, model=MODEL):
             for k, a in answers2.items() if k.startswith("fits::")}
     winner = (answers2.get("which") or {}).get("choice")
     result.update({"fits": fits, "winner": winner, "latency_ms": _ms(started)})
-    if not fits or max(fits.values()) < FITS_THRESHOLD or winner not in by_name:
+    skill = pick(winner, fits)
+    if skill not in by_name:
         result["reason"] = "nothing_fits"
         return result
-    result.update({"skill": winner, "reason": "suggested"})
+    result.update({"skill": skill, "reason": "suggested"})
     return result
+
+
+def pick(winner, fits):
+    """The skill to suggest, or None. The rerank's Choice decides which skill
+    and the fits nouls decide whether, so the winner is suggested only when its
+    OWN fit clears FITS_THRESHOLD. When it does not but another shortlisted
+    skill's does, that one is: the Choice and the nouls disagreed, and the
+    absolute "does this fit" answer is the one a wrong load costs."""
+    if fits.get(winner, 0.0) >= FITS_THRESHOLD:
+        return winner
+    best = max(fits, key=lambda n: fits[n]) if fits else None
+    if best is not None and fits[best] >= FITS_THRESHOLD:
+        return best
+    return None
 
 
 def context_block(skill):

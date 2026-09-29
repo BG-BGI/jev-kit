@@ -11,8 +11,9 @@ This is that recipe, over the roster your session was actually shown.
 
 ## What it does
 
-1. **Code first, free.** A slash command, a `!` line or a turn of fewer than
-   four words is never sent anywhere.
+1. **Code first, free.** A slash command, a `!` line, a turn of fewer than
+   four words, or a turn nobody typed (a `<task-notification>`, a
+   `<cross-session-message>`) is never sent anywhere.
 2. **Roster.** The session's own transcript carries the skill list Claude Code
    showed the model (a `skill_listing` attachment). That list is the roster,
    because it holds skills no file describes, like `init` or org-served
@@ -23,7 +24,8 @@ This is that recipe, over the roster your session was actually shown.
    suggests nothing.
 4. **Request 2** rereads the top three with each skill's full description and
    the opening of its `SKILL.md`, plus one "does this skill fit" `Noul` each.
-   A best fit under 0.30 suggests nothing.
+   The suggested skill's own fit has to reach 0.50: the Choice's winner if
+   it does, else the best-fitting of the three if that one does, else nothing.
 5. **One line of context.** It uses the cookbook's measured wording:
 
 ```

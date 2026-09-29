@@ -335,6 +335,22 @@ about 10,000 Jev input tokens through the warm daemon. Five hand-run prompts
 picked the right skill, including two org-served skills that exist only in the
 session's listing (`anthropic-skills:pptx`, `anthropic-skills:xlsx`).
 
+### After the first live day
+
+The first live day, 2026-09-29, turned up two problems. Nine of the 14 turns
+judged in real sessions were machine-written: `<task-notification>` and
+`<cross-session-message>` turns, each drawing a suggestion nobody asked for.
+Those are now skipped in code. The cookbook's fit bar also let through winners
+whose own fit was as low as 0.16, and several in the 0.4s. So the suggested
+skill's own fit now has to reach 0.50. When the Choice's winner falls short
+but another shortlisted skill clears the bar, that one is suggested instead.
+
+Rerun on the same 38 cases the same day: **27/28** right skill, **0/28**
+wrong, **0/10** loaded when none fits. The one miss is the label-printer case,
+whose right skill fit 0.46. A missed suggestion leaves the agent choosing on
+its own, as it did before the hook. A wrong one can cost a wrong load, and
+that is the trade the higher bar makes.
+
 This is **not** a measurement of Claude spend. A clean score on 38 synthetic
 cases says the suggester picks well. It does not say how many wrong loads it
 saves an agent, which is what the cookbook's 488-request run measured and what

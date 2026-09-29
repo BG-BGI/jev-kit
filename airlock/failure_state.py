@@ -17,6 +17,7 @@ import time
 
 from . import paths
 from . import platform_compat
+from . import redact
 
 STATE_DIR = paths.state_dir()
 STATE_FILE = STATE_DIR / "failures.json"
@@ -106,7 +107,7 @@ def record_failure(session_id, tool_name, summary, error):
             "ts": now,
             "tool": str(tool_name or "")[:80],
             "summary": str(summary or "")[:_TEXT_LIMIT],
-            "error": str(error or "")[:_TEXT_LIMIT],
+            "error": redact.redact(str(error or ""))[:_TEXT_LIMIT],
         })
         entry["failures"] = entry["failures"][-MAX_KEPT:]
         _save(fd, data)

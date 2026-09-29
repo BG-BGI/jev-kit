@@ -149,6 +149,17 @@ class TestHook(StateBase):
         self.assertIsNone(self._fail(ask))
         self.assertEqual(self._rows()[-1]["suppressed"], "said_recently")
 
+    def test_the_row_carries_the_redacted_error_for_audit(self):
+        ask = _ask("change_approach")
+        self._fail(ask)
+        self._fail(ask)
+        self.assertEqual(self._rows()[-1]["last_error"], "Exit code 2")
+
+    def test_the_stored_error_is_redacted(self):
+        secret = "sk-ant-api03-" + "d" * 40
+        failure_state.record_failure("r", "Bash", "curl", "401 for %s" % secret)
+        self.assertNotIn("d" * 40, failure_state.STATE_FILE.read_text())
+
     def test_silent_verdict_is_logged_not_said(self):
         ask = _ask("retry_with_fix")
         self._fail(ask)
