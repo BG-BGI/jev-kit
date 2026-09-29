@@ -151,6 +151,7 @@ only: no labelled corpus, no measured numbers, no sustained use.
 | **Uses** | | | | |
 | Browser agent | Jev decides each click, or a warm planner does with `plan: true`. Vendored at a pin | no, opt-in | Page state and goals, to the decider you configure | own numbers |
 | Review | A Jev code reviewer at a pin, with a fail-open wrapper | no, opt-in | Diffs, to the gate you configure | no numbers here |
+| `decide` MCP tool | Claude asks Jev for calibrated choice, score and yes/no decisions, many per call | no, opt-in | The context and questions Claude sends, redacted | **experimental** |
 | Document classifier | Two-stage classifier with an escape hatch and a confidence gate | no | Page text, when you call it | **experimental** |
 | Log triage | Redact-first, local-rules-first triage on stdin | no | Redacted lines, once local rules run out | **experimental** |
 | Shim | An OpenAI-shaped HTTP shim over the `claude` CLI | no, opt-in | Whatever you send through it | **experimental** |

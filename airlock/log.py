@@ -17,12 +17,16 @@ LOG_DIR = paths.state_dir()
 LOG_FILE = LOG_DIR / "shadow.jsonl"
 
 
-def append(entry):
+def append(entry, log_file=None):
     """Append one entry as a JSON line. Never raises -- a logging failure must
-    never surface anywhere a caller could turn into session-visible output."""
+    never surface anywhere a caller could turn into session-visible output.
+    `log_file` sends the row to another file in the same state directory
+    (the skill-suggest hook keeps its rows out of the guard's log)."""
     try:
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
-        platform_compat.restrict_path(LOG_DIR, 0o700)
+        target = log_file or LOG_FILE
+        log_dir = target.parent if log_file else LOG_DIR
+        log_dir.mkdir(parents=True, exist_ok=True)
+        platform_compat.restrict_path(log_dir, 0o700)
 
         line = json.dumps(entry, default=str, ensure_ascii=False) + "\n"
         # O_BINARY exists only on Windows, where the default is TEXT mode and
@@ -30,7 +34,7 @@ def append(entry):
         # still parse, but the file would stop being byte-identical to the
         # Linux one and any offset arithmetic would drift. getattr() keeps the
         # flag a no-op (0) on POSIX, so the Linux call is unchanged.
-        fd = os.open(str(LOG_FILE),
+        fd = os.open(str(target),
                      os.O_CREAT | os.O_WRONLY | os.O_APPEND | getattr(os, "O_BINARY", 0),
                      0o600)
         try:
@@ -41,6 +45,6 @@ def append(entry):
                 platform_compat.unlock_file(fd)
         finally:
             os.close(fd)
-        platform_compat.restrict_path(str(LOG_FILE), 0o600)
+        platform_compat.restrict_path(str(target), 0o600)
     except Exception:
         return
