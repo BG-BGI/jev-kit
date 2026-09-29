@@ -202,7 +202,7 @@ class RewriteOnBase(TierSurfaceBase):
 
 class TestRewriteShape(RewriteOnBase):
     def test_rewrites_subagent_type_and_preserves_every_other_field(self):
-        extra = {"model": "sonnet", "run_in_background": True, "isolation": "worktree"}
+        extra = {"model": "", "run_in_background": True, "isolation": "worktree"}
         data = _agent_data("workerO", "add a flag", "Add a --json flag.", extra=extra)
         original = json.loads(json.dumps(data["tool_input"]))
         denied, out = self._run(data, _answer("scoped_implementation"))

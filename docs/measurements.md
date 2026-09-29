@@ -84,15 +84,18 @@ the fallback is the residue, not a second opinion.
 
 ## Tier-guard accuracy
 
-`python3 -m airlock.eval`, 2026-09-19. 58 labelled Agent dispatches, scored on
+`python3 -m airlock.eval`, 2026-09-29. 71 labelled Agent dispatches, scored on
 the guard's three real outcomes: block, warn, silent. The labels come from each
-case's own chosen tier and task, read through the ladder.
+case's own chosen tier and task, read through the ladder. 13 of the 71 name a
+`model` or dispatch to Explore, so they are judged on the model ladder.
 
-**98.2%** overall, 56 of 57 scored, with **zero false denies and zero missed
-denies**. One case is labelled `ambiguous` and excluded. Block 18/18, silent
-29/29, warn 9/10.
+**98.6%** overall, 69 of 70 scored, with **zero false denies and zero missed
+denies**. One case is labelled `ambiguous` and excluded. Block 21/21, silent
+36/36, warn 12/13. All 13 model-ladder cases came out as labelled. Mean
+judgement latency 314 ms.
 
-The single miss is a `task_kind` boundary rather than a policy bug, and it
+The single miss is `tier-mech-4`, the same one as the 2026-09-19 run (58
+cases, 56 of 57). It is a `task_kind` boundary rather than a policy bug, and it
 misses in the safe direction: a missed warn, never a false block.
 `eval/README.md` names it, and says why the previous 16-false-deny figure was a
 label artefact rather than anything the model got wrong.

@@ -159,6 +159,57 @@ config can never make the guard misjudge a rung. Malformed means any of these:
 not a list of non-empty lists of strings, fewer than two rungs, or one name in
 two rungs.
 
+### The model ladder: judged by what the call runs on
+
+A stock Claude Code install has no `scout-find` or `workerS`. It has Explore,
+general-purpose, Plan and claude, and the Agent tool's `model` field. Advice to
+use `subagent_type=scout-find` cannot be acted on there. Advice to set
+`model=haiku` can, on any machine.
+
+So when code can know the model a dispatch runs on, the guard compares models
+instead of agent types, on the ladder haiku, sonnet, opus, fable. The model is
+known when:
+
+- the call sets `model` (it always wins, on any type);
+- the type has a fixed model: Explore runs on Haiku;
+- the type is a general one (claude, general-purpose, Plan) and `tiers.json`
+  says what the session runs on, with `"inherit_model"`.
+
+| task kind | adequate model |
+|---|---|
+| lookup, mechanical_edit | haiku |
+| scoped_implementation | sonnet |
+| judgement | opus |
+| hard_problem | fable |
+
+The gap table above applies unchanged. Two models over blocks, one warns, and
+under-tiered is only logged. The fable rule follows the model, so
+`model=fable` on a general type needs a stated prior failure too. A `fable`
+type sent with `model=haiku` is not a fable dispatch. A Haiku dispatch, Explore
+included, can never be over-tiered, so it is never sent to Jev at all. The
+advice names the model to set:
+
+```
+airlock tier advice: dispatched 'general-purpose on sonnet', but Jev judged
+this task 'mechanical_edit', which 'haiku' covers. Next time use
+subagent_type=general-purpose with model=haiku.
+Advice only -- nothing was blocked and this call ran as you wrote it.
+```
+
+Rewrite mode edits `model` instead of `subagent_type`, under the same bars and
+refusals. A dispatch with no model known in code keeps the agent-type ladder,
+so a machine that sets nothing sees no change except for Explore.
+
+On a stock install, tell the guard what your sessions run on:
+
+```json
+{"inherit_model": "opus",
+ "type_models": {"my-reader": "haiku"}}
+```
+
+The object form takes the agent ladder under `"ladder"`. `type_models` adds or
+overrides fixed models per type. An entry naming no known model is ignored.
+
 ## `R11-browse-via-jev`: a Playwright MCP call is pointed at `browse`
 
 The kit ships a Jev-decided `browse` MCP tool ([browse/](../browse/README.md)),
