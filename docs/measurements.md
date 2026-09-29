@@ -337,6 +337,33 @@ cases says the suggester picks well. It does not say how many wrong loads it
 saves an agent, which is what the cookbook's 488-request run measured and what
 `bench/` would have to run here.
 
+## Failure verdict
+
+`python3 -m airlock.failure_eval`, 2026-09-29. 13 synthetic runs of two or
+three failures each (`eval/failure-cases.jsonl`), labelled with one of five
+verdicts. One case, two guessed file paths, accepts both "look first" and
+"change approach", since both tell the agent to stop guessing. Two runs, one
+request each per case.
+
+| | run 1 | run 2 |
+|---|---|---|
+| verdict right | 8/13 | 9/13 |
+| spoken when it should be (8 cases) | 4/8 | 4/8 |
+| **wrong verdict said to the model** | **0** | **0** |
+| latency, one request | about 150 ms | |
+
+The misses are all on the silent side. Weak "ask the person" cases, like an
+expired token or a missing serial port, came back under the 0.8/0.4 bar and
+said nothing. Retry-with-a-fix cases often came back `gather_info`, also below
+the bar. Advice that steers a session wrongly is the costly failure, so that
+direction is the right one to err in.
+
+Four yes/no questions combined in code were measured first against the same
+cases, following TypeSafe's one-fact-per-question guidance. They did worse:
+5 of 13 right, with 5 wrong verdicts said aloud. "Is the agent guessing" read
+high on nearly every failure, and "only the person can fix this" read low on a
+plain 403. The one `Choice` stays.
+
 ## Known limits
 
 - **The bench found no denies.** The guard's measured value so far is that it
@@ -360,6 +387,8 @@ saves an agent, which is what the cookbook's 488-request run measured and what
 - **`search_intent` is the weaker of the two guards**, at 84.4% on its labelled
   rows with an ECE of 12.6%, against 98.0% and 1.9% for `task_kind`.
 - **`shim/`: PageIndex local indexing works through it, chat does not.**
+- **The failure verdict is measured on 13 synthetic runs only**, and its
+  saving (retries not taken) is not measured at all yet.
 - **Skill suggest is measured on synthetic cases only.** 38 of them, against a
   synthetic roster. Its effect on Claude's own spend is not yet measured here.
 - **Nothing here is a security control.** It is a cost and hygiene guard that
