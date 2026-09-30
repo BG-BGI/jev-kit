@@ -51,6 +51,15 @@ MAX_LEVELS = 10
 TIMEOUT_S = 10.0
 CONFIDENT = (0.8, 0.4)
 LOG_NAME = "decide.jsonl"
+RESULTS_DIR = "decide-results"
+MAX_FILE_BYTES = 20 * 1024 * 1024
+MAX_ITEMS = 2000
+ITEM_CHARS = 500
+CHUNK_CHARS = 20000
+CHUNK_ITEMS = 60
+ITEM_CONTEXT_CHARS = 4000
+WORKERS = 4
+SHOWN = 50
 KINDS = ("choice", "score", "yesno")
 
 TOOL = {
@@ -67,6 +76,21 @@ TOOL = {
     "inputSchema": {
         "type": "object",
         "properties": {
+            "context_file": {"type": "string",
+                             "description": "A file to decide over, read by the server so its "
+                                            "content never enters your context. Redacted "
+                                            "before it is sent; secret stores are refused."},
+            "items_file": {"type": "string",
+                           "description": "Apply ONE question (question/options/kind) to every "
+                                          "item of this file: each non-blank line, each JSONL "
+                                          "row, or each element of a JSON array. Returns counts, "
+                                          "a results_file with every label, and examples of the "
+                                          "labels named in `show`."},
+            "show": {"type": "array", "items": {"type": "string"},
+                     "description": "items_file mode: labels to list examples of (up to 50)."},
+            "max_items": {"type": "integer", "description": "items_file mode: at most 2000, "
+                                                           "the default. A file with more says so "
+                                                           "(`truncated`)."},
             "context": {"type": "string",
                         "description": "The facts to decide over: the text, listing, diff or "
                                        "description. Redacted before it is sent."},
@@ -106,6 +130,40 @@ def _options(raw):
     return {}
 
 
+def read_file(path):
+    """The text of a file the model named, or DecideError. Relative paths are
+    taken from the server's working directory, which is the session's."""
+    from airlock import rules
+    full = os.path.abspath(os.path.expanduser(str(path)))
+    if rules.is_secret_path(full):
+        raise DecideError("refusing %s: it looks like a secret store" % path)
+    if not os.path.isfile(full):
+        raise DecideError("no such file: %s" % path)
+    if os.path.getsize(full) > MAX_FILE_BYTES:
+        raise DecideError("%s is over %d MB" % (path, MAX_FILE_BYTES // (1024 * 1024)))
+    with open(full, "r", encoding="utf-8", errors="replace") as f:
+        return full, f.read()
+
+
+def parse_items(full, text, limit):
+    """[(where, item text)]: line numbers for a text or JSONL file, indexes
+    for a JSON array. Blank lines are skipped."""
+    items = []
+    stripped = text.lstrip()
+    if full.endswith(".json") and stripped.startswith("["):
+        try:
+            data = json.loads(text)
+        except Exception:
+            raise DecideError("%s is not valid JSON" % full) from None
+        for i, item in enumerate(data):
+            items.append(("item %d" % i, item if isinstance(item, str) else json.dumps(item)))
+    else:
+        for n, line in enumerate(text.splitlines(), 1):
+            if line.strip():
+                items.append(("line %d" % n, line.strip()))
+    return items[:limit], len(items)
+
+
 def build(args):
     """(request body, [(name, kind)]) from tool arguments. Raises DecideError."""
     from airlock import redact
@@ -140,8 +198,16 @@ def build(args):
             raise DecideError("two decisions are named %r" % name)
         questions[name] = question
         order.append((name, kind))
-    context = redact.redact(str(args.get("context") or ""))[:CONTEXT_CHARS]
-    return {"state": {"context": context}, "model": MODEL, "questions": questions}, order
+    return {"state": {"context": _context(args)}, "model": MODEL, "questions": questions}, order
+
+
+def _context(args, limit=CONTEXT_CHARS):
+    from airlock import redact
+    context = str(args.get("context") or "")
+    if args.get("context_file"):
+        _, text = read_file(args["context_file"])
+        context = (context + "\n\n" + text).strip()
+    return redact.redact(context)[:limit]
 
 
 def _margin(probabilities):
@@ -175,12 +241,115 @@ def shape(response, order, latency_ms):
             "jev_cost_usd": round(tokens * PRICE_PER_MTOK_USD / 1e6, 7)}
 
 
+def _chunks(items):
+    chunk, size = [], 0
+    for item in items:
+        if chunk and (size + len(item[2]) > CHUNK_CHARS or len(chunk) >= CHUNK_ITEMS):
+            yield chunk
+            chunk, size = [], 0
+        chunk.append(item)
+        size += len(item[2])
+    if chunk:
+        yield chunk
+
+
+def _item_question(kind, question, options):
+    from airlock import redact
+    q = {"type": "noul" if kind == "yesno" else kind}
+    if kind == "choice":
+        q["criteria"] = _options(options)
+    elif kind == "score":
+        q["criteria"] = [v or k for k, v in _options(options).items()]
+    return q, redact.redact(str(question))
+
+
+def classify_items(args, ask):
+    """items_file mode: one question over every item, in chunks of requests
+    run WORKERS at a time. Every label goes to a local results file; the
+    model gets counts and the examples it asked for."""
+    from concurrent.futures import ThreadPoolExecutor
+    from airlock import paths, redact
+    kind = args.get("kind") or ("choice" if args.get("options") else "yesno")
+    if kind not in KINDS:
+        raise DecideError("kind must be one of %s" % ", ".join(KINDS))
+    if not str(args.get("question") or "").strip():
+        raise DecideError("items_file needs a question")
+    if kind != "yesno":
+        n = len(_options(args.get("options")))
+        top = MAX_OPTIONS if kind == "choice" else MAX_LEVELS
+        if not 2 <= n <= top:
+            raise DecideError("a %s needs 2 to %d options" % (kind, top))
+    limit = max(1, min(int(args.get("max_items") or MAX_ITEMS), MAX_ITEMS))
+    full, text = read_file(args["items_file"])
+    raw, total = parse_items(full, text, limit)
+    if not raw:
+        raise DecideError("%s has no items" % args["items_file"])
+    items = [("i%d" % i, where, redact.redact(t)[:ITEM_CHARS]) for i, (where, t) in enumerate(raw)]
+    template, question = _item_question(kind, args["question"], args.get("options"))
+    context = _context(args, ITEM_CONTEXT_CHARS)
+
+    def run(chunk):
+        qs = {}
+        for key, _, _ in chunk:
+            q = dict(template)
+            q["instructions"] = "%s Answer for `items.%s` only." % (question, key)
+            qs[key] = q
+        state = {"context": context, "items": {k: t for k, _, t in chunk}}
+        response, _ = ask({"state": state, "model": MODEL, "questions": qs}, timeout_s=TIMEOUT_S)
+        return response
+
+    started = time.monotonic()
+    chunks = list(_chunks(items))
+    try:
+        with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+            responses = list(pool.map(run, chunks))
+    except Exception as exc:
+        raise DecideError("Jev request failed: %s" % str(exc)[:200]) from None
+    latency_ms = int((time.monotonic() - started) * 1000)
+
+    rows, tokens = [], 0
+    for chunk, response in zip(chunks, responses):
+        tokens += int(((response.get("usage") or {}).get("input_tokens")) or 0)
+        shaped = shape(response, [(k, kind) for k, _, _ in chunk], 0)["decisions"]
+        for key, where, t in chunk:
+            d = shaped.get(key) or {}
+            answer = d.get("answer")
+            if kind == "score" and answer is not None:
+                answer = int(round(answer))
+            rows.append({"where": where, "text": t[:160], "answer": answer,
+                         "confident": d.get("confident")})
+    counts = {}
+    for r in rows:
+        counts[str(r["answer"])] = counts.get(str(r["answer"]), 0) + 1
+    show = {str(x) for x in (args.get("show") or [])}
+    shown = [r for r in rows if str(r["answer"]) in show][:SHOWN]
+    out_dir = paths.state_file(RESULTS_DIR)
+    os.makedirs(str(out_dir), exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
+    results_file = str(out_dir / ("%s-%s.jsonl" % (stamp, os.path.basename(full))))
+    with open(results_file, "w") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+    return {"items": len(rows), "total_items": total, "truncated": total > len(rows),
+            "counts": counts,
+            "not_confident": sum(1 for r in rows if not r["confident"]),
+            "shown": shown, "results_file": results_file, "requests": len(chunks),
+            "latency_ms": latency_ms,
+            "jev_cost_usd": round(tokens * PRICE_PER_MTOK_USD / 1e6, 7)}
+
+
 def call(args, ask=None):
     from airlock import client, keyfile
     if ask is None:
         if not keyfile.get_api_key():
             raise DecideError("no TYPESAFE_API_KEY: see docs/install.md")
         ask = client.ask
+    if args.get("items_file"):
+        result = classify_items(args, ask)
+        _log([("items:" + os.path.basename(str(args["items_file"])), "items")],
+             {"decisions": {}, "latency_ms": result["latency_ms"],
+              "jev_cost_usd": result["jev_cost_usd"]})
+        return result
     body, order = build(args)
     started = time.monotonic()
     try:

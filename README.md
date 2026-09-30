@@ -324,6 +324,7 @@ Nothing is extrapolated.
 | Skill suggest | **27/28** right skill, **0/28** wrong, **0/10** loaded when none fits | `python3 -m suggest.eval`, 2026-09-29, 38 synthetic cases on a 28-skill synthetic roster, after the first live day raised the fit bar to 0.50. Suggester accuracy, not Claude spend |
 | Failure verdict | **0** wrong verdicts said over 13 runs; 8-9 of 13 verdicts right, 4 of 8 that should speak did | `python3 -m airlock.failure_eval`, 2026-09-29, two runs of 13 synthetic failure runs. It errs toward silence |
 | Harness, gate-fix loop | **0.0367 USD** a run with Jev deciding, against 0.0571 (Haiku), 0.0773 (Sonnet) and 0.1557 (Opus) with Claude alone, all green | `python3 -m harness.bench`, 2026-09-29, one seed failing five gates in one repository, n=2 per arm (Opus n=1). 36% of the saving holds on the same model |
+| `decide` over a file | **0.077 USD** median a run against 0.207 with Claude reading the file, both exact | 2026-09-30, a synthetic 2,000-line log classified line by line, Sonnet 5.5, n=2 per arm |
 | A/B bench, guard against no guard | **zero denies** over 30 sessions | `bench/results/20260919-120344.md`, 2026-09-19, enforce mode, five tasks |
 
 **Read that last row as a backstop, not a tax.** Thirty sessions of ordinary
