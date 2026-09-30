@@ -64,6 +64,7 @@ MODE_FILE = "skill-suggest"
 MODES = ("on", "shadow", "off")
 DEFAULT_MODE = "on"
 LOG_NAME = "skill-suggest.jsonl"
+ROSTER_CACHE = "skill-listing.json"
 SUGGEST_TIMEOUT_S = 2.0
 PROMPT_HEAD = 200
 
@@ -105,7 +106,9 @@ def judge(payload, ask=None):
             return None, None
         ask = client.ask
 
-    skills = roster.discover(payload.get("cwd"), transcript_path=payload.get("transcript_path"))
+    from airlock import paths
+    skills = roster.discover(payload.get("cwd"), transcript_path=payload.get("transcript_path"),
+                             cache_path=str(paths.state_file(ROSTER_CACHE)))
     clean = redact.redact_and_truncate_prompt(prompt)
     result = suggest.suggest(clean, skills, ask, timeout_s=SUGGEST_TIMEOUT_S)
     row = {

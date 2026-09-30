@@ -99,6 +99,21 @@ class TestVerdict(unittest.TestCase):
         self.assertEqual(failure_verdict.call_summary("Read", {"file_path": "/a/b.py"}),
                          "file_path: /a/b.py")
 
+    def test_a_repeated_error_is_quoted_in_the_advice(self):
+        err = "Refusing to run it. Split it into plain, separate commands and run them."
+        same = [{"tool": "Bash", "summary": "c%d" % i, "error": err} for i in range(4)]
+        text = failure_verdict.advice("change_approach", 4, same)
+        self.assertIn("The last 3 failed with the same error", text)
+        self.assertIn("Split it into plain, separate commands", text)
+        mixed = same[:2] + [{"tool": "Bash", "summary": "c", "error": "Exit code 1"}]
+        self.assertNotIn("same error", failure_verdict.advice("change_approach", 3, mixed))
+        long_err = "preamble " * 40 + "Split it into plain, separate commands."
+        quoted = failure_verdict.repeated_error([{"error": long_err}] * 2)
+        self.assertTrue(quoted.startswith("...") and quoted.endswith("separate commands."))
+        self.assertIsNone(failure_verdict.repeated_error(same[:1]))
+        self.assertIsNone(failure_verdict.repeated_error(
+            [{"error": ""}, {"error": ""}]))
+
     def test_advice_names_the_count(self):
         self.assertIn("failed 3 times", failure_verdict.advice("change_approach", 3))
         self.assertIn("nothing was blocked", failure_verdict.advice("ask_user", 2))

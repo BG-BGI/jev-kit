@@ -131,6 +131,35 @@ ADVICE = {
 }
 
 
-def advice(verdict, count):
-    return "airlock failure check: %s\nAdvice only -- nothing was blocked." % (
-        ADVICE[verdict] % count)
+REPEAT_WINDOW = 3
+REPEAT_HEAD = 120
+QUOTE_CHARS = 240
+
+
+def repeated_error(failures):
+    """The error the last few failures all share, or None.
+
+    First live use (2026-09-29): a worktree-isolated agent failed five times
+    on one Claude Code refusal that said exactly what to do ("Split it into
+    plain, separate commands"), was told only to "try a different approach",
+    and kept going. When the errors repeat, the advice now quotes the one they
+    share, since it is usually the most specific instruction on offer."""
+    recent = failures[-REPEAT_WINDOW:]
+    if len(recent) < 2:
+        return None
+    heads = {" ".join(str(f.get("error") or "").split())[:REPEAT_HEAD] for f in recent}
+    if len(heads) != 1 or not next(iter(heads)):
+        return None
+    error = " ".join(str(recent[-1].get("error") or "").split())
+    # The instruction in an error usually comes last ("... Split it into
+    # plain, separate commands"), so a long one is quoted from its end.
+    return error if len(error) <= QUOTE_CHARS else "..." + error[-QUOTE_CHARS:]
+
+
+def advice(verdict, count, failures=None):
+    text = ADVICE[verdict] % count
+    shared = repeated_error(failures or [])
+    if shared:
+        text += ("\nThe last %d failed with the same error, and it says what to do: \"%s\""
+                 % (min(len(failures), REPEAT_WINDOW), shared))
+    return "airlock failure check: %s\nAdvice only -- nothing was blocked." % text
