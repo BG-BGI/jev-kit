@@ -1,6 +1,7 @@
 # compaction: fast-jev-compaction (optional, off by default, read this first)
 
-[tamaratran/fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction)
+[BG-BGI/fast-jev-compaction](https://github.com/BG-BGI/fast-jev-compaction),
+a fork of [tamaratran/fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction),
 is a Claude Code plugin that compacts context automatically once a session
 passes a token threshold, by default 60% of the context window. It asks
 TypeSafe's Jev model per tool call whether the call and its result still
@@ -11,11 +12,12 @@ need to stay in history.
 **This is the largest default-on data egress of anything used by this
 repository.** Read from its own source: the plugin builds a conversation state
 of up to `maxStateTokens`, by default **25,000 tokens**. That state is made of
-tool inputs and tool-result text, truncated only for size, with **no redaction
-pass anywhere in the plugin's source**. No `redact()` call, no secret scrubber,
-nothing. In practice that means document text,
+tool inputs and tool-result text, truncated only for size, and, in the upstream
+plugin, **no redaction pass at all**. The BG-BGI fork adds one (`src/redact.ts`,
+ported from `airlock/redact.py`: keys, tokens, JWTs, emails, `KEY=value`
+secrets, private keys, long hex/base64). It is pattern matching only. In practice that means document text,
 email bodies, and the contents of `Read`/`Bash` output going to TypeSafe on
-most long turns, as-is.
+most long turns, still mostly as-is: prose, names and paths are not caught.
 
 Compare that with `belay/`, which sends only the task text, the final
 message and check command lines, through a 13-rule redactor, capped at a few
@@ -56,7 +58,7 @@ compaction/install.sh
    account's `settings.json`, and if not, **prints** the edit and stops. It
    does not write settings.json itself;
 3. reads the key into a shell variable (never echoed, never logged);
-4. runs `claude plugin marketplace add tamaratran/fast-jev-compaction`;
+4. runs `claude plugin marketplace add BG-BGI/fast-jev-compaction`;
 5. runs `claude plugin install fast-jev-compaction@fast-jev-compaction --config apiKey=$TYPESAFE_API_KEY`.
 
 ## If you want it, but redacted
@@ -70,7 +72,7 @@ upstream as published, and forking it is a separate piece of work.
 
 ```bash
 claude plugin uninstall fast-jev-compaction@fast-jev-compaction
-claude plugin marketplace remove tamaratran/fast-jev-compaction
+claude plugin marketplace remove BG-BGI/fast-jev-compaction
 ```
 
 Then remove `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` from `settings.json` if
