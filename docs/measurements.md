@@ -419,6 +419,23 @@ This is n=2 per arm, on one seed in one repository. What it shows is that the
 split works on a loop whose steps fit a menu. Whether it carries over to open
 coding work, where the next step cannot be listed ahead of time, is untested.
 
+## The `decide` tool over a file
+
+2026-09-30, Sonnet 5.5 through `claude -p`, two trials per arm, Bash off in
+both. A synthetic 2,000-line robot log (21 errors, 220 warnings, 1,759 info)
+and one prompt: classify every line, give the three counts and every error
+line number. Every run got all of it exactly right.
+
+| arm | total $ per run | median | turns |
+|---|---|---|---|
+| Claude reads the file itself (Read, Grep) | 0.198, 0.216 | **0.207** | 9, 13 |
+| Claude hands the path to `decide` (`items_file`) | 0.108, 0.045 | **0.077** | 4, 4 |
+
+The `decide` rows include Jev's own spend, 0.012 and 0.007. On data already
+in Claude's context the direction reverses: a Haiku session answered a small
+pick itself for $0.027 in one turn, where calling the tool cost the same in
+three. That is why the guidance names files, not decisions in general.
+
 ## Known limits
 
 - **The bench found no denies.** The guard's measured value so far is that it

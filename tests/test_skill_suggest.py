@@ -172,7 +172,8 @@ class TestSkipReason(unittest.TestCase):
         for text in ("<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>",
                      '<cross-session-message from="uds:/tmp/x.sock">S14 DONE: all green</cross-session-message>',
                      "<system-reminder>\nsomething long enough to count as words\n</system-reminder>",
-                     "<bash-input>make check-agent now please</bash-input>"):
+                     "<bash-input>make check-agent now please</bash-input>",
+                     '<agent-message from="a3b7">recovery status: DONE all code and docs</agent-message>'):
             self.assertEqual(suggest.skip_reason(text), "machine_message", text[:30])
         self.assertIsNone(suggest.skip_reason("1.\n\n<pasted_content>the repo says 0.2 s</pasted_content>"))
 

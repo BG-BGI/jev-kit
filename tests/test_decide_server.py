@@ -4,6 +4,7 @@ import tests  # noqa: F401, I001 -- first import: isolates HOME and AIRLOCK_* (s
 import importlib.util
 import io
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -93,6 +94,86 @@ class TestCall(unittest.TestCase):
             raise OSError("down")
         with self.assertRaises(server.DecideError):
             server.call({"question": "q"}, ask=boom)
+
+
+class FakeItemsJev:
+    """Labels an item 'error' when its text says ERROR, else 'info'."""
+
+    def __init__(self):
+        self.bodies = []
+
+    def __call__(self, body, timeout_s=None):
+        self.bodies.append(body)
+        answers = {}
+        for key in body["questions"]:
+            label = "error" if "ERROR" in body["state"]["items"][key] else "info"
+            answers[key] = {"type": "choice", "choice": label, "confidence": 0.95,
+                            "probabilities": {label: 0.97, "warning": 0.03}}
+        return {"answers": answers, "usage": {"input_tokens": 100}}, 20
+
+
+class TestFiles(unittest.TestCase):
+    OPTIONS = {"error": "a fault", "warning": "degraded", "info": "normal"}
+
+    def _file(self, name, text):
+        path = Path(tempfile.mkdtemp()) / name
+        path.write_text(text)
+        return str(path)
+
+    def test_items_file_labels_every_line_in_chunks(self):
+        lines = ["ok %d" % i if i % 10 else "ERROR %d" % i for i in range(150)]
+        path = self._file("robot.log", "\n".join(lines) + "\n\n")
+        jev = FakeItemsJev()
+        r = server.call({"items_file": path, "question": "severity?", "options": self.OPTIONS,
+                         "show": ["error"]}, ask=jev)
+        self.assertEqual(r["items"], 150)
+        self.assertFalse(r["truncated"])
+        self.assertEqual(r["counts"], {"error": 15, "info": 135})
+        self.assertEqual(len(r["shown"]), 15)
+        self.assertEqual(r["shown"][0]["where"], "line 1")
+        self.assertGreater(len(jev.bodies), 1)
+        self.assertTrue(all(len(b["questions"]) <= server.CHUNK_ITEMS for b in jev.bodies))
+        rows = Path(r["results_file"]).read_text().splitlines()
+        self.assertEqual(len(rows), 150)
+
+    def test_json_array_and_jsonl_items(self):
+        arr = self._file("items.json", json.dumps([{"msg": "ERROR a"}, "fine"]))
+        r = server.call({"items_file": arr, "question": "q", "options": self.OPTIONS}, ask=FakeItemsJev())
+        self.assertEqual(r["counts"], {"error": 1, "info": 1})
+        jsonl = self._file("items.jsonl", '{"m": "ERROR"}\n{"m": "ok"}\n')
+        r = server.call({"items_file": jsonl, "question": "q", "options": self.OPTIONS}, ask=FakeItemsJev())
+        self.assertEqual(r["items"], 2)
+
+    def test_more_items_than_the_limit_says_truncated(self):
+        path = self._file("big.log", "\n".join("x %d" % i for i in range(30)))
+        r = server.call({"items_file": path, "question": "q", "options": self.OPTIONS,
+                         "max_items": 10}, ask=FakeItemsJev())
+        self.assertEqual((r["items"], r["total_items"], r["truncated"]), (10, 30, True))
+
+    def test_context_file_is_read_and_redacted(self):
+        secret = "sk-ant-api03-" + "e" * 40
+        path = self._file("notes.txt", "deploy notes, token %s" % secret)
+        jev = FakeJev()
+        server.call({"context_file": path, "question": "is this about a deploy?"}, ask=jev)
+        sent = json.dumps(jev.bodies[0])
+        self.assertIn("deploy notes", sent)
+        self.assertNotIn("e" * 40, sent)
+
+    def test_secret_stores_and_missing_files_are_refused(self):
+        env = self._file(".env", "API_KEY=x")
+        for args in ({"items_file": env, "question": "q", "options": ["a", "b"]},
+                     {"context_file": env, "question": "q"},
+                     {"items_file": "/no/such/file.log", "question": "q", "options": ["a", "b"]}):
+            with self.assertRaises(server.DecideError):
+                server.call(args, ask=FakeJev())
+
+    def test_items_mode_needs_a_question_and_options(self):
+        path = self._file("a.log", "x\n")
+        with self.assertRaises(server.DecideError):
+            server.call({"items_file": path, "options": self.OPTIONS}, ask=FakeItemsJev())
+        with self.assertRaises(server.DecideError):
+            server.call({"items_file": path, "question": "q", "kind": "choice",
+                         "options": ["only"]}, ask=FakeItemsJev())
 
 
 class TestProtocol(unittest.TestCase):

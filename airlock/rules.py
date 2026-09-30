@@ -409,6 +409,18 @@ def secret_path_res():
     pointer pair resolved now. Use this, never SECRET_PATH_RES directly."""
     return tuple(SECRET_PATH_RES) + _pointer_secret_path_res()
 
+def is_secret_path(fp):
+    """True when R1 would stop a Read of `fp`: a protected secret store, or a
+    path whose name suggests it may hold one. For callers outside the hook
+    (decide/server.py) that read a file on the model's behalf."""
+    if not fp or _is_safe_path(fp):
+        return False
+    p = _expand(fp)
+    if any(r.search(p) for r in secret_path_res()):
+        return True
+    return any(t in p.lower() for t in AMBIGUOUS_SECRET_TOKENS)
+
+
 # Paths that look secret-ish but are fine, so the code pre-filter must not hit.
 SAFE_PATH_RES = [
     re.compile(r"\.(example|sample|template|dist|md|rst|txt\.example)$"),

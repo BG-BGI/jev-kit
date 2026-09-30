@@ -38,7 +38,8 @@ WIDE_DESCRIPTION_CHARS = 250
 MAX_CHOICE_OPTIONS = 250
 MIN_WORDS = 4
 MODEL = "jev-latest"
-MACHINE_PREFIXES = ("<task-notification>", "<cross-session-message", "<system-reminder>",
+MACHINE_PREFIXES = ("<task-notification>", "<cross-session-message", "<agent-message",
+                    "<system-reminder>",
                     "<local-command-stdout>", "<bash-input>", "<bash-stdout>")
 
 CHOICE_INSTRUCTIONS = (
