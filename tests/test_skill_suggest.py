@@ -134,6 +134,25 @@ class TestTranscriptRoster(unittest.TestCase):
         self.assertEqual(merged[0]["description"], "the full alpha description")
         self.assertEqual(merged[0]["body"], "alpha body")
 
+    def test_a_first_turn_uses_the_listing_last_seen_in_its_directory(self):
+        cache = str(Path(tempfile.mkdtemp()) / "skill-listing.json")
+        path = self._transcript({"type": "skill_listing", "content": "- org:pptx: decks",
+                                 "names": []})
+        home = tempfile.mkdtemp()
+        seen = roster.discover("/repo/a", home, transcript_path=path, cache_path=cache)
+        self.assertEqual([s["name"] for s in seen], ["org:pptx"])
+        first = roster.discover("/repo/a", home, transcript_path=None, cache_path=cache)
+        self.assertEqual([s["name"] for s in first], ["org:pptx"])
+        other = roster.discover("/repo/b", home, transcript_path=None, cache_path=cache)
+        self.assertEqual(other, [])
+
+    def test_a_broken_cache_is_ignored(self):
+        cache = Path(tempfile.mkdtemp()) / "skill-listing.json"
+        cache.write_text("not json")
+        self.assertEqual(roster.recall(str(cache), "/repo"), {})
+        roster.remember(str(cache), "/repo", {"a": "b"})
+        self.assertEqual(roster.recall(str(cache), "/repo"), {"a": "b"})
+
     def test_missing_transcript_falls_back_to_disk(self):
         self.assertEqual(roster.from_transcript("/nonexistent/t.jsonl"), {})
         self.assertEqual(roster.from_transcript(None), {})

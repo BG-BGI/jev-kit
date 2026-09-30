@@ -19,6 +19,10 @@ This is that recipe, over the roster your session was actually shown.
    because it holds skills no file describes, like `init` or org-served
    `anthropic-skills:pptx`. `SKILL.md` files under the project,
    `~/.claude/skills` and installed plugins supply the full descriptions.
+   A session's first prompt arrives before that listing is written, so each
+   listing seen is saved per directory in
+   `~/.local/state/airlock/skill-listing.json`, and a first turn uses the last
+   one saved for its directory.
 3. **Request 1** ranks the whole roster with one `Choice`, and asks three
    `Noul`s whether the turn wants an action at all. Their mean under 0.20
    suggests nothing.

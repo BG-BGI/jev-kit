@@ -186,11 +186,62 @@ def merge(listing, disk):
     return out
 
 
-def discover(cwd=None, home=None, transcript_path=None):
+CACHE_KEEP = 20
+
+
+def _read_cache(cache_path):
+    try:
+        with open(cache_path, "r") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def remember(cache_path, cwd, listing):
+    """Save this directory's listing, keeping the CACHE_KEEP most recent
+    directories. Written to a temp file and renamed, so a reader never sees
+    half a file. Never raises."""
+    if not cache_path or not listing:
+        return
+    try:
+        import time
+        data = _read_cache(cache_path)
+        data[cwd or ""] = {"ts": time.time(), "listing": listing}
+        keep = sorted(data, key=lambda k: -float((data[k] or {}).get("ts") or 0))[:CACHE_KEEP]
+        data = {k: data[k] for k in keep}
+        tmp = "%s.tmp.%d" % (cache_path, os.getpid())
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, cache_path)
+    except Exception:
+        return
+
+
+def recall(cache_path, cwd):
+    """The last listing saved for this same directory, or {}. Only the same
+    directory: project skills differ from one repository to the next."""
+    if not cache_path:
+        return {}
+    listing = (_read_cache(cache_path).get(cwd or "") or {}).get("listing")
+    return listing if isinstance(listing, dict) else {}
+
+
+def discover(cwd=None, home=None, transcript_path=None, cache_path=None):
     """Every model-invocable skill, as [{name, description, body}], sorted by
-    name. Never raises."""
+    name. Never raises.
+
+    A session's first prompt reaches the hook before Claude Code has written
+    its skill_listing into the transcript, so on the first live day every
+    first turn fell back to the disk roster (93 skills, not 128). With
+    `cache_path`, each listing seen is saved per directory and a turn that has
+    none uses the last one saved for its directory."""
     disk = discover_disk(cwd, home)
     listing = from_transcript(transcript_path)
+    if listing:
+        remember(cache_path, cwd, listing)
+    else:
+        listing = recall(cache_path, cwd)
     return merge(listing, disk) if listing else disk
 
 

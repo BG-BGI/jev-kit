@@ -114,7 +114,7 @@ def judge(payload, mode, ask=None):
     text = None
     if result["speak"] and mode == "on":
         if failure_state.claim_announcement(session_id, result["verdict"]):
-            text = failure_verdict.advice(result["verdict"], len(failures))
+            text = failure_verdict.advice(result["verdict"], len(failures), failures)
         else:
             row["suppressed"] = "said_recently"
     row["emitted"] = bool(text)
