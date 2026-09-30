@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Install tamaratran/fast-jev-compaction, a Claude Code plugin that compacts
+# Install BG-BGI/fast-jev-compaction (fork of tamaratran/fast-jev-compaction), a Claude Code plugin that compacts
 # context automatically once a session passes a token threshold.
 #
 # READ compaction/README.md BEFORE running this. It sends far more off the
 # machine than any other component in this repository: up to about 25,000
-# tokens of tool inputs and tool-result text per request, UNREDACTED, to
-# TypeSafe. There is no redaction pass anywhere in the plugin's source.
+# tokens of tool inputs and tool-result text per request to TypeSafe. The
+# fork runs a pattern redactor first (src/redact.ts); upstream has none.
 set -uo pipefail
 
-MARKETPLACE="tamaratran/fast-jev-compaction"
+MARKETPLACE="BG-BGI/fast-jev-compaction"
 PLUGIN_ID="fast-jev-compaction@fast-jev-compaction"
 MIN_VERSION="2.1.274"
 
@@ -113,7 +113,7 @@ cat <<'EOF'
 
 Installed. Before you rely on this, re-read compaction/README.md: this
 plugin sends up to ~25,000 tokens of raw tool inputs and tool-result text per
-compaction request, unredacted, to TypeSafe. That was true at the time this
-was read from its source (see docs/CREDITS.md) and nothing in this install changes
-it.
+compaction request to TypeSafe, after a pattern redactor (keys, tokens,
+emails, secrets in KEY=value). Pattern matching is not a guarantee: prose,
+names and paths still go out.
 EOF
