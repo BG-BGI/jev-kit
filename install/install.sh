@@ -73,9 +73,9 @@ Components (default: --guard --session-check --daemon --monitoring
                  says whether to change approach, look first or ask. Opt in:
                  failed calls' error heads, redacted, go to TypeSafe. Implies
                  --guard; wired only with --wire
-  --compaction   tamaratran/fast-jev-compaction -- reads compaction/README.md
+  --compaction   BG-BGI/fast-jev-compaction -- reads compaction/README.md
                  first: it sends far more off the machine than anything else
-                 here
+                 here (COMPACTION_MODE=tool|session|both, default tool)
   --all          every component above
 
 Options:
@@ -828,8 +828,9 @@ fi
 if [ "$WANT_COMPACTION" = "1" ]; then
   step "Compaction"
   warn "compaction/README.md first: it sends far more off the machine than"
-  warn "  anything else in this repository (up to ~25,000 tokens of raw tool"
-  warn "  inputs/results per request, unredacted). Not run automatically here;"
+  warn "  anything else in this repository (redacted tool results in tool mode,"
+  warn "  up to ~25,000 tokens of redacted state per request in session mode)."
+  warn "  Not run automatically here;"
   warn "  install it yourself once you have read that and loaded the key:"
   warn "      compaction/install.sh"
 fi

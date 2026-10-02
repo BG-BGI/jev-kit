@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
-# Install BG-BGI/fast-jev-compaction (fork of tamaratran/fast-jev-compaction), a Claude Code plugin that compacts
-# context automatically once a session passes a token threshold.
+# Install BG-BGI/fast-jev-compaction (fork of tamaratran/fast-jev-compaction), a Claude Code plugin with
+# two modes: "tool" trims long tool results as they arrive, "session" replaces
+# the compaction summary and auto-compacts past a token threshold.
 #
 # READ compaction/README.md BEFORE running this. It sends far more off the
-# machine than any other component in this repository: up to about 25,000
-# tokens of tool inputs and tool-result text per request to TypeSafe. The
-# fork runs a pattern redactor first (src/redact.ts); upstream has none.
+# machine than any other component in this repository: tool output (tool
+# mode) or up to about 25,000 tokens of conversation state per request
+# (session mode) to TypeSafe. The fork runs a pattern redactor first
+# (src/redact.ts).
 set -uo pipefail
 
 MARKETPLACE="BG-BGI/fast-jev-compaction"
 PLUGIN_ID="fast-jev-compaction@fast-jev-compaction"
 MIN_VERSION="2.1.274"
+MODE="${COMPACTION_MODE:-tool}"
+case "$MODE" in tool|session|both) ;; *) echo "compaction: COMPACTION_MODE must be tool, session or both (got: $MODE)" >&2; exit 2 ;; esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat >&2 <<EOF
-usage: $0
+usage: [COMPACTION_MODE=tool|session|both] $0
 
 Requires:
   - Claude Code >= $MIN_VERSION with function hooks enabled
@@ -100,20 +104,20 @@ if [ -z "${TYPESAFE_API_KEY:-}" ]; then
   echo "  Load it first:  set -a; . ~/.config/jev-kit/env 2>/dev/null; set +a" >&2
   exit 1
 fi
-echo "compaction: key loaded (not printed)"
+echo "compaction: key loaded (not printed); the plugin reads it from the environment or the key file, so it is not stored in plugin config"
 
 # --- marketplace and plugin --------------------------------------------------
 echo "compaction: claude plugin marketplace add $MARKETPLACE"
 claude plugin marketplace add "$MARKETPLACE"
 
 echo "compaction: claude plugin install $PLUGIN_ID"
-claude plugin install "$PLUGIN_ID" --config "apiKey=$TYPESAFE_API_KEY"
+claude plugin install "$PLUGIN_ID" --config "mode=$MODE"
 
 cat <<'EOF'
 
 Installed. Before you rely on this, re-read compaction/README.md: this
-plugin sends up to ~25,000 tokens of raw tool inputs and tool-result text per
-compaction request to TypeSafe, after a pattern redactor (keys, tokens,
-emails, secrets in KEY=value). Pattern matching is not a guarantee: prose,
-names and paths still go out.
+plugin sends tool output (tool mode) or up to ~25,000 tokens of conversation
+state per request (session mode) to TypeSafe, after a pattern redactor (keys,
+tokens, emails, secrets in KEY=value). Pattern matching is not a guarantee:
+prose, names and paths still go out.
 EOF
