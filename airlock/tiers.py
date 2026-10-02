@@ -39,7 +39,14 @@ to set those options, with the ladder under "ladder":
 
     {"ladder": [...],
      "inherit_model": "opus",
-     "type_models": {"my-reader": "haiku"}}
+     "type_models": {"my-reader": "haiku"},
+     "cost_cap": true}
+
+"cost_cap" refuses a sub-agent dispatch whose model costs more than a
+reference model (same cost passes). `true` caps at "inherit_model"; a model
+alias ("sonnet") caps there instead. Prices come from airlock/pricing.py. It
+needs no Jev call, and fails open whenever the reference, the dispatch's
+model or the prices are unknown.
 """
 import json
 
@@ -244,4 +251,16 @@ def effective_model(subagent_type, model_override, path=None):
         return fixed
     if t in GENERAL_TYPES:
         return inherit_model(path)
+    return None
+
+
+def cost_cap_reference(path=None):
+    """The model alias sub-agents may not out-cost, from tiers.json's
+    "cost_cap": a model alias, or true for "inherit_model". None when the cap
+    is off, malformed, or true with no inherit_model to point at."""
+    raw = _options(path).get("cost_cap")
+    if raw is True:
+        return inherit_model(path)
+    if isinstance(raw, str):
+        return model_name(raw)
     return None

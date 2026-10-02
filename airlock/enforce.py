@@ -423,10 +423,45 @@ def handle(data, tool_name, mode="enforce"):
         return False
 
 
+def _cost_cap_reason(v):
+    return (
+        "Airlock cost cap: this sub-agent runs on %s ($%.2f/M tokens in+out), dearer than the "
+        "%s cap ($%.2f/M). Re-dispatch with `model` set to one of: %s."
+        % (v["chosen_model"], v["chosen_per_mtok"], v["cap_model"], v["cap_per_mtok"],
+           ", ".join(v["allowed_models"]) or v["cap_model"])
+    )
+
+
+def _cost_cap(data, tool_name, mode, base):
+    """tiers.json `cost_cap`: refuse an Agent dispatch dearer than the cap.
+    Code only, no Jev call, independent of the R8-tier-guard rule's action.
+    True when the call was denied."""
+    if tool_name != "Agent":
+        return False
+    from . import guards
+    v = guards.cost_cap_violation(data)
+    if not v:
+        return False
+    enforced = mode == "enforce"
+    row = dict(base)
+    row.update({"guard": "cost_cap", "rule_id": "cost-cap", "action": "deny",
+                "enforced": enforced, "elapsed_ms": 0}, **v)
+    log.append(row)
+    if enforced:
+        emit_deny(_cost_cap_reason(v))
+    return enforced
+
+
 def _handle(data, tool_name, mode="enforce"):
     b_ms = budget_ms()
     session_id = data.get("session_id") or ""
     ctx = rules_mod.build_ctx(data, tool_name)
+
+    if _cost_cap(data, tool_name, mode, {
+        "ts": _now_iso(), "session_id": session_id, "cwd": ctx.get("cwd"),
+        "tool_name": tool_name, "mode": mode, "budget_ms": b_ms,
+    }):
+        return True
 
     overrides = rules_mod.load_action_overrides()
     matches = rules_mod.prefilter_matches(ctx, overrides)

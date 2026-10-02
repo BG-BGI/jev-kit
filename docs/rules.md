@@ -210,6 +210,37 @@ On a stock install, tell the guard what your sessions run on:
 The object form takes the agent ladder under `"ladder"`. `type_models` adds or
 overrides fixed models per type. An entry naming no known model is ignored.
 
+### Cost cap: nothing dearer than the reference model
+
+`"cost_cap"` refuses any sub-agent dispatch whose model costs more than a
+reference. The same cost passes. It is code only, so it needs no Jev call, and
+it applies whatever action `R8-tier-guard` is set to. Shadow mode logs the
+would-be deny and blocks nothing.
+
+```json
+{"inherit_model": "opus", "cost_cap": true}
+```
+
+`true` caps at `inherit_model`. A model alias caps there instead:
+`"cost_cap": "sonnet"` allows haiku and sonnet and refuses opus and fable. The
+deny names the models that fit, so the agent can re-dispatch with `model` set.
+
+Prices come from the public Vercel AI Gateway list
+(`https://ai-gateway.vercel.sh/v1/models`, no key). A model's price is input
+plus output USD per token on the newest non-fast row of its family. The hook
+never touches the network: it reads `gateway-pricing.json` in the state dir,
+and when that is a day old it starts one detached refresh (retried at most
+hourly) and judges on the stale numbers meanwhile. Check or pull by hand:
+
+```
+python3 -m airlock.pricing show
+python3 -m airlock.pricing refresh
+```
+
+The cap fails open. It does nothing when the reference is unknown (`true`
+with no `inherit_model`), when the dispatch's model is unknown (a custom type
+with no entry in `type_models`), or when there is no price cache yet.
+
 ## `R11-browse-via-jev`: a Playwright MCP call is pointed at `browse`
 
 The kit ships a Jev-decided `browse` MCP tool ([browse/](../browse/README.md)),

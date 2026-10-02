@@ -9,7 +9,7 @@ to judge" case never even reaches the network.
 import datetime
 import random
 
-from . import client, keyfile, log, policy, questions, redact, tiers
+from . import client, keyfile, log, policy, pricing, questions, redact, tiers
 from . import scope as scope_mod
 
 # `adequate` when the judgement never happened (the call was skipped, or the
@@ -34,6 +34,28 @@ def _cheapest_rung(subagent_type, model_override):
     if tiers.effective_model(subagent_type, model_override):
         return tiers.MODEL_LADDER[0]
     return tiers.rung_names()[0]
+
+
+def cost_cap_violation(data):
+    """Why this Agent dispatch is dearer than tiers.json's cost_cap allows, as
+    a dict, or None. None whenever the cap is off or anything needed to judge
+    is unknown (the reference, the dispatch's model, a price): fail open."""
+    reference = tiers.cost_cap_reference()
+    if not reference:
+        return None
+    cache = pricing.load()
+    pricing.maybe_refresh_async(cache)
+    ti = data.get("tool_input") or {}
+    chosen = tiers.effective_model(str(ti.get("subagent_type") or ""), str(ti.get("model") or ""))
+    if not chosen:
+        return None
+    cap_price, chosen_price = pricing.alias_price(reference, cache), pricing.alias_price(chosen, cache)
+    if cap_price is None or chosen_price is None or chosen_price <= cap_price:
+        return None
+    allowed = [m for m in tiers.MODEL_LADDER
+               if (pricing.alias_price(m, cache) or float("inf")) <= cap_price]
+    return {"chosen_model": chosen, "cap_model": reference, "allowed_models": allowed,
+            "chosen_per_mtok": chosen_price * 1e6, "cap_per_mtok": cap_price * 1e6}
 
 
 def _now_iso():
