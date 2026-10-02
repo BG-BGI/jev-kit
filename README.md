@@ -145,7 +145,7 @@ only: no labelled corpus, no measured numbers, no sustained use.
 | Session check | Says at session start when the guard has stopped judging | **yes** | Nothing. Local state only | exercised |
 | **Speed and cost** | | | | |
 | Warm daemon | Holds a warm connection: 0.3 s a judgement, not 0.9 s | **yes** | Nothing of its own | exercised |
-| Compaction | Installs the community `fast-jev-compaction` plugin | no, opt-in | **Up to 25,000 tokens of raw tool inputs and results per request** | never enabled here |
+| Compaction | Installs the BG-BGI `fast-jev-compaction` plugin. `tool` mode (default) trims long tool results; `session` mode replaces the compaction summary | no, opt-in | Redacted tool output, one result at a time (`tool`); up to 25,000 tokens of redacted conversation state per request (`session`) | never enabled here |
 | Skill suggest | Names at most one skill per turn, so the agent loads the right `SKILL.md` or none. Two Jev requests | no, opt-in | The prompt, redacted, and the skill roster's descriptions | labelled eval only |
 | Failure verdict | Once failures pile up, says whether to change approach, look first or ask. One Jev request, advice only | no, opt-in | Redacted call summaries and error heads of recent failures | labelled eval only |
 | File search | Per-user `plocate` index of `$HOME`, refreshed hourly | **yes** | Nothing. Local | exercised |
@@ -361,7 +361,8 @@ Full tables, methods and the known limits: **[docs/measurements.md](docs/measure
   says otherwise. Never a raw tool result: every string passes through
   `airlock/redact.py` first, and truncation happens after redaction so a secret
   straddling the boundary is not half-leaked. Compaction is the one large
-  exposure, which is why it is never installed for you.
+  exposure (redacted, but pattern matching only), which is why it is never
+  installed for you.
 - **This is not a security control.** It is a cost and hygiene guard that fails
   open by design. A control that depends on an agent choosing to obey it is not
   a control. If something must not happen, restrict it at the platform.
@@ -440,7 +441,8 @@ No. TypeSafe gets a redacted summary of the ambiguous fraction of tool calls:
 the command line, or the dispatch description. Never a tool result, never file
 contents, never a diff. Every string passes through `airlock/redact.py` first.
 The two exceptions are opt-in and named in the table above: compaction sends
-raw tool inputs and results, and review sends diffs.
+redacted tool results (`tool` mode) or conversation state (`session` mode),
+and review sends diffs.
 
 </details>
 

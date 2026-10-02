@@ -303,9 +303,10 @@ in order:
 
 Do **not** do any of these without asking first:
 
-- **Turning on compaction** (`--compaction`). It sends raw, unredacted tool
-  inputs and results off the machine, up to roughly 25,000 tokens per
-  request: far more than anything else here. Read `compaction/README.md` and
+- **Turning on compaction** (`--compaction`). It sends tool output (`tool` mode)
+  or conversation state (`session` mode) off the machine after a pattern
+  redactor, up to roughly 25,000 tokens per request in `session` mode: far
+  more than anything else here. Read `compaction/README.md` and
   get an explicit yes.
 - **Enabling `enforce` on a machine that is not yours.** A deny blocks
   somebody else's tool call. Shadow first, for long enough that the log says
