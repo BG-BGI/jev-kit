@@ -270,6 +270,7 @@ comes back.
 | `JEV_BROWSE_TIMEOUT` | `90` | Seconds allowed for a call. |
 | `JEV_BROWSE_CHROMIUM` | newest in the Playwright cache, then `PATH` | The binary to start. |
 | `JEV_BROWSE_NO_SANDBOX` | unset | `1` adds `--no-sandbox`. Read the section above first. |
+| `JEV_BROWSE_PROFILE_DIR` | unset | Reuse this Chromium profile (cookies persist, never deleted) instead of a fresh temp profile. For signed-in sessions. Treat the dir as a credential. |
 | `JEV_BROWSE_PREWARM` | unset | `1` warms Chromium, the worker and the text model at start-up. |
 | `TEXT_MODEL_API_KEY` | unset | Selects the OpenAI-compatible helper. Also read from the key file. |
 | `TEXT_MODEL_PROVIDER` | chosen for you | Set by hand to override the choice above. |

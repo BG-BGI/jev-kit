@@ -69,6 +69,8 @@ Environment:
                        whose AppArmor denies user namespaces to an unprofiled
                        binary (Ubuntu 23.10+), Chromium refuses to start, the
                        error says so, and a person decides
+  JEV_BROWSE_PROFILE_DIR  reuse this Chromium profile dir (cookies persist, never
+                       deleted) instead of a throwaway one per start
   JEV_BROWSE_PREWARM   set to 1 to start Chromium, the worker and the text
                        model at start-up instead of on the first call
   JEV_OFFSCREEN_MAX    how many off-viewport links a page snapshot may offer
@@ -576,7 +578,15 @@ class Chromium:
                 "chromium`, or set JEV_BROWSE_CHROMIUM to a Chromium or Chrome binary."
             )
         port = free_port()
-        self.profile = tempfile.mkdtemp(prefix="jev-browse-profile-")
+        persistent = os.environ.get("JEV_BROWSE_PROFILE_DIR")
+        if persistent:
+            # Opt-in: reuse a signed-in profile across calls. Never deleted by us.
+            os.makedirs(persistent, mode=0o700, exist_ok=True)
+            self.profile = persistent
+            self.profile_persistent = True
+        else:
+            self.profile = tempfile.mkdtemp(prefix="jev-browse-profile-")
+            self.profile_persistent = False
         command = [binary, "--headless=new", "--remote-debugging-port=%d" % port,
                    "--user-data-dir=%s" % self.profile, "--no-first-run",
                    "--no-default-browser-check"]
@@ -628,7 +638,7 @@ class Chromium:
             except Exception:
                 _kill_group(proc)
         profile, self.profile = self.profile, None
-        if profile:
+        if profile and not getattr(self, "profile_persistent", False):
             shutil.rmtree(profile, ignore_errors=True)
         self.url = None
 
