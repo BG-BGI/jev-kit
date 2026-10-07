@@ -253,11 +253,22 @@ def apply(home, project, days, out=None):
     if state == "ok" and not os.path.exists(settings_path + ".bak"):
         shutil.copy2(settings_path, settings_path + ".bak")
     settings["disabledMcpjsonServers"] = sorted(set(existing) | set(added))
+    # A name in both lists is a conflict Claude Code should never be handed:
+    # drop what we disable from enabledMcpjsonServers too, and remember it so
+    # restore puts the explicit enable back.
+    enabled = settings.get("enabledMcpjsonServers")
+    dropped = []
+    if isinstance(enabled, list):
+        dropped = sorted(set(added) & {e for e in enabled if isinstance(e, str)})
+        if dropped:
+            settings["enabledMcpjsonServers"] = [e for e in enabled if e not in set(dropped)]
     _write_json_atomic(settings_path, settings)
 
     entry = manifest.get(project)
     prev = entry.get("added") if isinstance(entry, dict) and isinstance(entry.get("added"), list) else []
+    prev_dropped = entry.get("dropped_enabled") if isinstance(entry, dict) and isinstance(entry.get("dropped_enabled"), list) else []
     manifest[project] = {"added": sorted(set(prev) | set(added)),
+                         "dropped_enabled": sorted(set(prev_dropped) | set(dropped)),
                          "ts": _now().isoformat()}
     _write_json_atomic(manifest_path, manifest)
     print("disabled %d project-scope server(s) in %s: %s"
@@ -289,8 +300,17 @@ def restore(home, project, out=None):
     if state == "ok":
         ours = set(added)
         existing = settings.get("disabledMcpjsonServers")
+        changed = False
         if isinstance(existing, list):
             settings["disabledMcpjsonServers"] = [e for e in existing if e not in ours]
+            changed = True
+        dropped = entry.get("dropped_enabled") if isinstance(entry.get("dropped_enabled"), list) else []
+        if dropped:
+            enabled = settings.get("enabledMcpjsonServers")
+            enabled = [e for e in enabled if isinstance(e, str)] if isinstance(enabled, list) else []
+            settings["enabledMcpjsonServers"] = sorted(set(enabled) | set(dropped))
+            changed = True
+        if changed:
             _write_json_atomic(settings_path, settings)
 
     manifest.pop(project, None)

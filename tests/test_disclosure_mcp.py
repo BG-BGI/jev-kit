@@ -150,6 +150,31 @@ class TestDisclosureMcp(unittest.TestCase):
         self.assertEqual(manifest[str(self.project)]["added"], ["dormant", "linear"])
         self.assertIn("ts", manifest[str(self.project)])
 
+    def test_apply_drops_disabled_names_from_enabled_and_restore_puts_them_back(self):
+        # A name in both enabledMcpjsonServers and disabledMcpjsonServers is a
+        # conflict Claude Code should never be handed.
+        self.settings_path.parent.mkdir(parents=True)
+        self.settings_path.write_text(json.dumps(
+            {"enabledMcpjsonServers": ["dormant", "linear", "keepme"]}))
+
+        rc, _ = self.run_cli("apply", "--home", str(self.home),
+                             "--project", str(self.project))
+        self.assertEqual(rc, 0)
+        got = self.settings()
+        self.assertEqual(got["disabledMcpjsonServers"], ["dormant", "linear"])
+        self.assertEqual(got["enabledMcpjsonServers"], ["keepme"])
+        manifest = json.loads(self.manifest_path.read_text())
+        self.assertEqual(manifest[str(self.project)]["dropped_enabled"],
+                         ["dormant", "linear"])
+
+        rc, _ = self.run_cli("restore", "--home", str(self.home),
+                             "--project", str(self.project))
+        self.assertEqual(rc, 0)
+        got = self.settings()
+        self.assertEqual(got["disabledMcpjsonServers"], [])
+        self.assertEqual(sorted(got["enabledMcpjsonServers"]),
+                         ["dormant", "keepme", "linear"])
+
     def test_apply_creates_settings_when_missing(self):
         rc, _ = self.run_cli("apply", "--home", str(self.home),
                              "--project", str(self.project))

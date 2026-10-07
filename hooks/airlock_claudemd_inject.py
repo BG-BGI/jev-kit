@@ -26,7 +26,10 @@ WHAT IT PROMISES
 A Freshworks app directory is one with a manifest.json mentioning
 "platform-version", a .fdk directory, or a config/iparams.json -- the same
 artifacts the FDK itself creates or requires. cwd plus up to three ancestors
-covers a session started in a subdirectory of the app.
+covers a session started in a subdirectory of the app. The home directory
+itself is never treated as an app dir: the FDK CLI keeps a global ~/.fdk
+state dir, and $HOME is an ancestor of every project, so counting it would
+inject the text everywhere and undo the slimming.
 """
 import json
 import os
@@ -69,7 +72,8 @@ def main():
         if dirs[-1].parent == dirs[-1]:
             break
         dirs.append(dirs[-1].parent)
-    if not any(_is_fw_dir(d) for d in dirs):
+    home = _home()
+    if not any(_is_fw_dir(d) for d in dirs if d != home):
         return 0
     text = full_md.read_text(encoding="utf-8")
     sys.stdout.write(json.dumps({

@@ -294,6 +294,25 @@ class TestInjectHook(FakeHome):
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(proc.stdout, "")
 
+    def test_global_fdk_state_dir_in_home_does_not_count(self):
+        # The FDK CLI keeps a global ~/.fdk state dir; home is an ancestor of
+        # every project, so counting it would inject the text everywhere.
+        self.full_md.write_text(self.FULL)
+        (self.home / ".fdk").mkdir()
+        plain = self.home / "plain"
+        plain.mkdir()
+        proc = self.run_hook(None, cwd_payload=plain)
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout, "")
+
+    def test_fdk_dir_inside_an_app_dir_still_counts(self):
+        self.full_md.write_text(self.FULL)
+        app = self.home / "myapp"
+        (app / ".fdk").mkdir(parents=True)
+        proc = self.run_hook(None, cwd_payload=app)
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("fw-dev-toolkit-instructions", proc.stdout)
+
     def test_silent_when_backup_missing(self):
         fw = self.make_fw_dir()
         proc = self.run_hook(None, cwd_payload=fw)
