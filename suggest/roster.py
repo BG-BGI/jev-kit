@@ -18,6 +18,11 @@ first name wins:
                       both <installPath>/skills/<dir>/SKILL.md and a SKILL.md at
                       the plugin root. A plugin skill is named "<plugin>:<skill>",
                       which is the name the Skill tool takes.
+  4. cold skills:     ~/.claude/skills-cold/<dir>/SKILL.md -- user skills that
+                      disclosure/skills.py moved out of auto-discovery. Each
+                      carries cold=True and the path to its SKILL.md, so a
+                      suggestion can point the model at the file; a hot skill
+                      of the same name always wins.
 
 A skill whose frontmatter says `disable-model-invocation: true` is left out:
 the model cannot load it, so suggesting it would be advice nobody can take.
@@ -174,7 +179,8 @@ def from_transcript(path):
 def merge(listing, disk):
     """The listing's names, described by disk where disk knows the skill and
     by the listing otherwise. A disk skill the listing does not name is left
-    out: the session cannot load it."""
+    out: the session cannot load it. A cold one is kept anyway: the listing
+    can never name it, and the session loads it by reading its SKILL.md."""
     by_name = {s["name"]: s for s in disk}
     out = []
     for name in sorted(listing):
@@ -183,6 +189,7 @@ def merge(listing, disk):
             out.append(dict(known, description=known["description"] or listing[name][:DESCRIPTION_CHARS]))
         else:
             out.append({"name": name, "description": listing[name][:DESCRIPTION_CHARS], "body": ""})
+    out.extend(s for s in disk if s.get("cold") and s["name"] not in listing)
     return out
 
 
@@ -260,4 +267,10 @@ def discover_disk(cwd=None, home=None):
         skill = _read_skill(path, name)
         if skill:
             seen[name] = skill
+    for path, name in _skills_dir(os.path.join(home, ".claude", "skills-cold")):
+        if name in seen:
+            continue
+        skill = _read_skill(path, name)
+        if skill:
+            seen[name] = dict(skill, cold=True, path=os.path.abspath(path))
     return [seen[n] for n in sorted(seen)]

@@ -18,7 +18,9 @@ GATEWAY = [
     {"id": "anthropic/claude-sonnet-5.5", "pricing": {"input": "0.000002", "output": "0.00001"}},
     {"id": "anthropic/claude-sonnet-5.5-fast", "pricing": {"input": "0.9", "output": "0.9"}},
     {"id": "anthropic/claude-opus-5.5", "pricing": {"input": "0.000004", "output": "0.00002"}},
-    {"id": "anthropic/claude-fable-5.1", "pricing": {"input": "0.00001", "output": "0.00005"}},
+    {"id": "anthropic/claude-fable-5.1", "pricing": {"input": "0.00001", "output": "0.00005",
+                                                     "input_cache_read": "0.000001",
+                                                     "input_cache_write": "0.0000125"}},
     {"id": "openai/gpt-5", "pricing": {"input": "0.000001", "output": "0.00001"}},
     {"id": "anthropic/claude-opus-9", "pricing": {"input": "0.1"}},
 ]
@@ -47,6 +49,16 @@ class TestExtract(unittest.TestCase):
     def test_alias_price_is_input_plus_output(self):
         self.assertAlmostEqual(pricing.alias_price("haiku", CACHE), 0.000006)
         self.assertIsNone(pricing.alias_price("haiku", {"aliases": {}}))
+
+    def test_rates_carries_cache_rates_when_listed_and_none_when_not(self):
+        fable = pricing.rates("fable", CACHE)
+        self.assertEqual(fable["id"], "anthropic/claude-fable-5.1")
+        self.assertAlmostEqual(fable["cache_read"], 0.000001)
+        self.assertAlmostEqual(fable["cache_write"], 0.0000125)
+        haiku = pricing.rates("haiku", CACHE)
+        self.assertIsNone(haiku["cache_read"])
+        self.assertIsNone(haiku["cache_write"])
+        self.assertIsNone(pricing.rates("haiku", {"aliases": {}}))
 
 
 class TestCacheFile(unittest.TestCase):

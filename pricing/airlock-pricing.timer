@@ -1,0 +1,12 @@
+[Unit]
+Description=Pull gateway model prices once a day
+
+[Timer]
+# Daily is plenty: model prices move on the order of weeks, and the cache's
+# own REFRESH_AFTER_S is 24h, so a daily fire keeps hooks on fresh numbers
+# without them ever needing the network themselves.
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target

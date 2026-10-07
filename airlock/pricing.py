@@ -59,9 +59,10 @@ def _rate(value):
 
 
 def extract(models):
-    """alias -> {"id", "input", "output"} from the gateway's `data` list: the
-    newest non-fast model of each family. Rows without both rates are
-    skipped, never guessed."""
+    """alias -> {"id", "input", "output", "cache_read", "cache_write"} from
+    the gateway's `data` list: the newest non-fast model of each family.
+    Rows without both base rates are skipped, never guessed; the two cache
+    rates are optional (None when the gateway omits them)."""
     best = {}
     for m in models if isinstance(models, list) else []:
         if not isinstance(m, dict):
@@ -76,7 +77,9 @@ def extract(models):
         alias = hit.group(1)
         version = tuple(int(p) for p in hit.group(2).split("."))
         if alias not in best or version > best[alias][0]:
-            best[alias] = (version, {"id": m["id"], "input": rin, "output": rout})
+            best[alias] = (version, {"id": m["id"], "input": rin, "output": rout,
+                                     "cache_read": _rate(pricing.get("input_cache_read")),
+                                     "cache_write": _rate(pricing.get("input_cache_write"))})
     return {alias: row for alias, (_, row) in best.items()}
 
 
@@ -165,6 +168,23 @@ def alias_price(alias, cache=None):
     return None if rin is None or rout is None else rin + rout
 
 
+def rates(alias, cache=None):
+    """The full per-token rate card for a model alias: {"id", "input",
+    "output", "cache_read", "cache_write"}, USD per token, cache rates None
+    when the gateway did not list them. None when the alias is unknown, so a
+    caller costing a transcript can fall back rather than invent numbers."""
+    cache = cache if cache is not None else load()
+    row = (cache or {}).get("aliases", {}).get(alias)
+    if not isinstance(row, dict):
+        return None
+    rin, rout = _rate(row.get("input")), _rate(row.get("output"))
+    if rin is None or rout is None:
+        return None
+    return {"id": row.get("id"), "input": rin, "output": rout,
+            "cache_read": _rate(row.get("cache_read")),
+            "cache_write": _rate(row.get("cache_write"))}
+
+
 def _main(argv):
     cmd = argv[0] if argv else "show"
     if cmd == "refresh":
@@ -179,8 +199,11 @@ def _main(argv):
         age_h = (time.time() - cache["fetched_at"]) / 3600
         print("cache age %.1fh" % age_h)
         for alias, row in sorted(cache["aliases"].items(), key=lambda kv: alias_price(kv[0], cache) or 0):
-            print("%-7s %-34s $%.2f/M in  $%.2f/M out" % (
-                alias, row["id"], row["input"] * 1e6, row["output"] * 1e6))
+            cr, cw = _rate(row.get("cache_read")), _rate(row.get("cache_write"))
+            print("%-7s %-34s $%.2f/M in  $%.2f/M out  %s cache-read  %s cache-write" % (
+                alias, row["id"], row["input"] * 1e6, row["output"] * 1e6,
+                "-" if cr is None else "$%.2f/M" % (cr * 1e6),
+                "-" if cw is None else "$%.2f/M" % (cw * 1e6)))
         return 0
     print("usage: python3 -m airlock.pricing [refresh|show]")
     return 2

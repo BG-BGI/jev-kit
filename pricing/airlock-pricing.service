@@ -1,0 +1,14 @@
+[Unit]
+Description=airlock daily model-price pull from the Vercel AI Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Hooks never touch the network, so without this timer the price cache only
+# refreshes when a hook happens to notice it is stale. The timer makes the
+# daily pull unconditional; a failed pull leaves the previous cache untouched
+# (airlock/pricing.py), so this unit can never make things worse.
+WorkingDirectory=%h/.local/share/airlock/current
+ExecStart=/usr/bin/python3 -m airlock.pricing refresh
+Nice=10

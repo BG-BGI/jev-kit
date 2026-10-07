@@ -48,6 +48,7 @@ class TestEveryShippedUnitRenders(unittest.TestCase):
         ("tuning/airlock-tune.service", "tuning/airlock-tune.timer"),
         ("claude-update/claude-auto-update.service",
          "claude-update/claude-auto-update.timer"),
+        ("pricing/airlock-pricing.service", "pricing/airlock-pricing.timer"),
     )
 
     def test_each_renders_to_a_valid_plist(self):
@@ -97,6 +98,11 @@ class TestTimers(unittest.TestCase):
                         "claude-update/claude-auto-update.timer")
         self.assertEqual(plist["StartCalendarInterval"], {"Minute": 0})
         self.assertNotIn("RunAtLoad", plist)
+
+    def test_pricing_fires_daily_at_midnight(self):
+        plist = _render("pricing/airlock-pricing.service",
+                        "pricing/airlock-pricing.timer")
+        self.assertEqual(plist["StartCalendarInterval"], {"Hour": 0, "Minute": 0})
 
     def test_an_unknown_calendar_is_refused_not_guessed(self):
         with self.assertRaises(ValueError):
