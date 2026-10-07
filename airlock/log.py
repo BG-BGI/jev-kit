@@ -11,7 +11,7 @@ tool call -- never interleave a partial line.
 import json
 import os
 
-from . import paths, platform_compat
+from . import metrics, paths, platform_compat
 
 LOG_DIR = paths.state_dir()
 LOG_FILE = LOG_DIR / "shadow.jsonl"
@@ -48,3 +48,4 @@ def append(entry, log_file=None):
         platform_compat.restrict_path(str(target), 0o600)
     except Exception:
         return
+    metrics.record_event(entry, target.stem)

@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-from . import keyfile, paths
+from . import keyfile, metrics, paths
 from .platform_compat import has_unix_sockets
 
 API_URL = "https://api.typesafe.ai/v1/systemone"
@@ -127,7 +127,14 @@ def ask(body, timeout_s=DEFAULT_TIMEOUT, windows=None):
     via_daemon = _ask_via_daemon(body, timeout_s, windows=windows)
     if via_daemon is not None:
         response, latency_ms, _reused = via_daemon
+        metrics.record_call("daemon", True, latency_ms, response, len(body.get("questions") or []))
         return response, latency_ms
 
-    api_key = keyfile.get_api_key()
-    return call_jev(api_key, body.get("state"), body.get("questions"), timeout=timeout_s)
+    try:
+        api_key = keyfile.get_api_key()
+        response, latency_ms = call_jev(api_key, body.get("state"), body.get("questions"), timeout=timeout_s)
+    except Exception as exc:
+        metrics.record_call("direct", False, n_questions=len(body.get("questions") or []), error=exc)
+        raise
+    metrics.record_call("direct", True, latency_ms, response, len(body.get("questions") or []))
+    return response, latency_ms
