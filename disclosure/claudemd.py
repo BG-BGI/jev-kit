@@ -53,6 +53,23 @@ def _claude_dir(home):
     return Path(home).expanduser() / ".claude"
 
 
+def _log_event(action, **fields):
+    """One best-effort metrics breadcrumb, written only after a real state
+    change (never on a no-op or refusal). Lazy import, everything swallowed:
+    slim/restore/wire must keep working without airlock's metrics machinery,
+    and a log/metrics failure must never fail the command."""
+    try:
+        import datetime
+
+        from airlock import log
+        entry = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                 "guard": "disclosure", "action": action}
+        entry.update(fields)
+        log.append(entry)
+    except Exception:
+        pass
+
+
 def _atomic_write(path, text):
     """tmp + os.replace in the same directory, so a crash mid-write can
     never leave a half-written CLAUDE.md or settings.json behind."""
@@ -105,9 +122,11 @@ def cmd_slim(home):
               "an older backup. Reconcile or remove it first." % full_md,
               file=sys.stderr)
         return 1
+    slimmed = _slim_text(original)
     _atomic_write(full_md, original)
-    _atomic_write(claude_md, _slim_text(original))
+    _atomic_write(claude_md, slimmed)
     print("slimmed %s (full text in %s)" % (claude_md, full_md))
+    _log_event("claudemd_slim", chars_before=len(original), chars_after=len(slimmed))
     return 0
 
 
@@ -122,8 +141,10 @@ def cmd_restore(home):
         print("CLAUDE.md does not carry the slim marker; refusing to "
               "overwrite a file this tool did not write", file=sys.stderr)
         return 1
-    _atomic_write(claude_md, full_md.read_text(encoding="utf-8"))
+    full_text = full_md.read_text(encoding="utf-8")
+    _atomic_write(claude_md, full_text)
     print("restored %s from %s (backup kept)" % (claude_md, full_md))
+    _log_event("claudemd_restore", chars=len(full_text))
     return 0
 
 
@@ -209,6 +230,7 @@ def cmd_wire(home):
         bak.write_text(settings.read_text(encoding="utf-8"), encoding="utf-8")
     _atomic_write(settings, json.dumps(data, indent=2) + "\n")
     print('%s: added SessionStart hook "%s"' % (settings, command))
+    _log_event("claudemd_wire", settings=str(settings))
     return 0
 
 

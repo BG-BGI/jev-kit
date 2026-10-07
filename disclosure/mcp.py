@@ -44,6 +44,21 @@ def _norm(p):
     return os.path.abspath(os.path.expanduser(p))
 
 
+def _log_event(action, **fields):
+    """One best-effort metrics breadcrumb, written only after a real state
+    change (never on a no-op or refusal). Lazy import, everything swallowed:
+    this module must keep working without airlock's metrics machinery, and a
+    log/metrics failure must never fail the command (metrics.record_event's
+    own philosophy)."""
+    try:
+        from airlock import log
+        entry = {"ts": _now().isoformat(), "guard": "disclosure", "action": action}
+        entry.update(fields)
+        log.append(entry)
+    except Exception:
+        pass
+
+
 def _now():
     return datetime.datetime.now(datetime.timezone.utc)
 
@@ -273,6 +288,7 @@ def apply(home, project, days, out=None):
     _write_json_atomic(manifest_path, manifest)
     print("disabled %d project-scope server(s) in %s: %s"
           % (len(added), settings_path, ", ".join(added)), file=out)
+    _log_event("mcp_apply", project=project, disabled=len(added), servers=added)
     return 0
 
 
@@ -316,6 +332,7 @@ def restore(home, project, out=None):
     manifest.pop(project, None)
     _write_json_atomic(manifest_path, manifest)
     print("restored %s: removed %s" % (project, ", ".join(sorted(added))), file=out)
+    _log_event("mcp_restore", project=project, servers=sorted(added))
     return 0
 
 

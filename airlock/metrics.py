@@ -17,6 +17,7 @@ not slow or break a hook.
 
     python3 -m airlock.metrics backfill
     python3 -m airlock.metrics scrape-compaction   # fast-jev-compaction stats, from transcripts
+    python3 -m airlock.metrics scrape-overhead     # per-session context overhead, from transcripts
     python3 -m airlock.metrics report [--since YYYY-MM-DD]
 """
 import datetime
@@ -237,6 +238,7 @@ def report(since=None, out=sys.stdout):
                   (comp[:18], b["n"], b["jev"], b["deny"], b["err"], b["in"], b["out"],
                    "-" if p95 is None else p95, b["cost"]))
     _report_compaction(out, since)
+    _report_overhead(out, since)
     if calls:
         out.write("\njev requests (client.ask) since %s\n" % since)
         for t in sorted({c[0] for c in calls}):
@@ -278,6 +280,33 @@ def _report_compaction(out, since):
         out.write("  passed through (errors): %d\n" % passed)
 
 
+def _report_overhead(out, since):
+    """Per-session context overhead. first_ctx_tokens is the number that says
+    whether the disclosure work shrank the per-session baseline."""
+    from . import overhead_scrape
+    conn = _connect(timeout_ms=5000)
+    try:
+        overhead_scrape.ensure_schema(conn)
+        n, requests, cache_read, cost, priced = conn.execute(
+            "SELECT COUNT(*), SUM(requests), SUM(cache_read_tokens), SUM(est_cost_usd),"
+            " COUNT(est_cost_usd) FROM session_overhead WHERE substr(ts,1,10) >= ?",
+            (since,)).fetchone()
+        firsts = [r[0] for r in conn.execute(
+            "SELECT first_ctx_tokens FROM session_overhead"
+            " WHERE substr(ts,1,10) >= ? AND first_ctx_tokens IS NOT NULL", (since,))]
+    finally:
+        conn.close()
+    if not n:
+        return
+    out.write("\nsession overhead (from transcripts) since %s\n" % since)
+    out.write("  sessions %d, requests %d, cache-read %d tok\n"
+              % (n, requests or 0, cache_read or 0))
+    if firsts:
+        out.write("  first-request context (per-session baseline): mean %d tok, median %s tok\n"
+                  % (sum(firsts) / len(firsts), _pct(firsts, 0.5)))
+    out.write("  est cost $%.4f over %d priced session(s) of %d\n" % (cost or 0.0, priced, n))
+
+
 def _main(argv):
     cmd = argv[0] if argv else "report"
     if cmd == "backfill":
@@ -291,7 +320,11 @@ def _main(argv):
     if cmd == "scrape-compaction":
         from . import compaction_scrape
         return compaction_scrape._main(argv[1:])
-    print("usage: python3 -m airlock.metrics [backfill|scrape-compaction|report [--since YYYY-MM-DD]]")
+    if cmd == "scrape-overhead":
+        from . import overhead_scrape
+        return overhead_scrape._main(argv[1:])
+    print("usage: python3 -m airlock.metrics"
+          " [backfill|scrape-compaction|scrape-overhead|report [--since YYYY-MM-DD]]")
     return 2
 
 

@@ -58,6 +58,22 @@ def _rate(value):
         return None
 
 
+def _log_event(action, **fields):
+    """One best-effort metrics breadcrumb per refresh outcome. Lazy import
+    and a blanket except: pricing must never break -- or slow a caller --
+    because log/metrics did."""
+    try:
+        import datetime
+
+        from . import log
+        entry = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                 "guard": "pricing", "action": action}
+        entry.update(fields)
+        log.append(entry)
+    except Exception:
+        pass
+
+
 def extract(models):
     """alias -> {"id", "input", "output", "cache_read", "cache_write"} from
     the gateway's `data` list: the newest non-fast model of each family.
@@ -113,12 +129,15 @@ def refresh(path=None, url=URL, now=None):
             body = json.load(resp)
         aliases = extract(body.get("data"))
         if not aliases:
+            _log_event("refresh_failed", error="no claude prices in gateway list")
             return None
         _write_atomic(path or _cache_path(), json.dumps(
             {"fetched_at": time.time() if now is None else now, "source": url, "aliases": aliases},
             indent=2, sort_keys=True))
+        _log_event("refresh", families=len(aliases))
         return aliases
-    except Exception:
+    except Exception as exc:
+        _log_event("refresh_failed", error=str(exc)[:300])
         return None
 
 
