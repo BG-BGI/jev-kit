@@ -1,0 +1,5 @@
+{
+  "name": "jev-kit",
+  "owner": { "name": "BG-BGI" },
+  "plugins": [{ "name": "jev-stats", "source": "./mods/jev-stats" }]
+}
