@@ -8,11 +8,20 @@ a tool result or a prompt is not a compaction event.
 Forked and resumed sessions copy records into new transcript files, so rows
 are keyed on a hash of (timestamp, text) and a copy is ignored.
 
+Each row also carries requests_after: the number of distinct assistant
+requests later in the same transcript. A trimmed tool result would otherwise
+have ridden along in every one of those requests, so the effective context
+saving of a trim is (chars saved / 4) * requests_after. The count grows while
+a session continues and a resumed session's file holds the longer history, so
+re-scraping updates an existing row to the largest count seen.
+
     python3 -m airlock.compaction_scrape [--projects-dir DIR]
 """
+import bisect
 import hashlib
 import json
 import re
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -25,6 +34,9 @@ _PASS = re.compile(r"^(?P<tool>\S+) result passed through \((?P<err>.*)\)$")
 _KEPT = re.compile(r"^kept (?P<kept>\d+)/(?P<total>\d+) messages, no summary \((?P<red>\d+)% reduction;(?P<rest>.*)\)$")
 _FALL = re.compile(r"^fallback to built-in summary \((?P<why>.*)\)$")
 _SKIP = re.compile(r"^auto-compact skipped \((?P<err>.*)\)$")
+_ASST = re.compile(r'"type"\s*:\s*"assistant"')
+_REQID = re.compile(r'"requestId"\s*:\s*"([^"]+)"')
+_TS = re.compile(r'"timestamp"\s*:\s*"([^"]+)"')
 
 TABLE = """
 CREATE TABLE IF NOT EXISTS compaction (
@@ -47,6 +59,7 @@ CREATE TABLE IF NOT EXISTS compaction (
   pinned INTEGER,
   state_tokens INTEGER,
   requests INTEGER,
+  requests_after INTEGER,
   detail TEXT,
   row_hash TEXT NOT NULL UNIQUE
 );
@@ -55,7 +68,16 @@ CREATE INDEX IF NOT EXISTS compaction_ts ON compaction(ts);
 
 _COLS = ("ts", "project", "session_id", "cwd", "mode", "tool", "outcome", "chars_before", "chars_after",
          "chunks", "chunks_omitted", "msgs_kept", "msgs_total", "reduction_pct", "call_dropped", "pinned",
-         "state_tokens", "requests", "detail", "row_hash")
+         "state_tokens", "requests", "requests_after", "detail", "row_hash")
+
+
+def ensure_schema(conn):
+    """Create the table, and add requests_after to a database from before it."""
+    conn.executescript(TABLE)
+    try:
+        conn.execute("ALTER TABLE compaction ADD COLUMN requests_after INTEGER")
+    except sqlite3.OperationalError:
+        pass
 
 
 def _num(pattern, text):
@@ -94,6 +116,18 @@ def parse(text):
     return None
 
 
+def _request_times(lines):
+    """Sorted first-seen timestamps of each distinct assistant requestId."""
+    seen = {}
+    for line in lines:
+        if "assistant" not in line or not _ASST.search(line):
+            continue
+        rid, ts = _REQID.search(line), _TS.search(line)
+        if rid and ts and rid.group(1) not in seen:
+            seen[rid.group(1)] = ts.group(1)
+    return sorted(seen.values())
+
+
 def scrape(projects_dir=None, conn=None):
     """Returns (events_seen, rows_added)."""
     root = Path(projects_dir) if projects_dir else Path.home() / ".claude" / "projects"
@@ -101,13 +135,14 @@ def scrape(projects_dir=None, conn=None):
     conn = conn or metrics._connect(timeout_ms=5000)
     seen = added = 0
     try:
-        conn.executescript(TABLE)
+        ensure_schema(conn)
         with conn:
             for f in sorted(root.glob("*/*.jsonl")):
                 try:
                     lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
                 except OSError:
                     continue
+                req_ts = _request_times(lines)
                 for line in lines:
                     if PREFIX not in line:
                         continue
@@ -123,13 +158,18 @@ def scrape(projects_dir=None, conn=None):
                         continue
                     seen += 1
                     ts = rec.get("timestamp") or ""
+                    after = len(req_ts) - bisect.bisect_right(req_ts, ts)
                     full = dict.fromkeys(_COLS)
                     full.update(row, ts=ts, project=f.parent.name, session_id=rec.get("sessionId"),
-                                cwd=rec.get("cwd"),
+                                cwd=rec.get("cwd"), requests_after=after,
                                 row_hash=hashlib.sha256((ts + "\n" + content).encode("utf-8")).hexdigest())
                     added += conn.execute(
                         "INSERT OR IGNORE INTO compaction (%s) VALUES (%s)" % (",".join(_COLS), ",".join("?" * len(_COLS))),
                         [full[c] for c in _COLS]).rowcount
+                    # A resumed session's file holds the longer history: keep the largest count.
+                    conn.execute("UPDATE compaction SET requests_after = ? WHERE row_hash = ?"
+                                 " AND (requests_after IS NULL OR requests_after < ?)",
+                                 (after, full["row_hash"], after))
     finally:
         if own:
             conn.close()

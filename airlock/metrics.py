@@ -251,9 +251,10 @@ def _report_compaction(out, since):
     from . import compaction_scrape
     conn = _connect(timeout_ms=5000)
     try:
-        conn.executescript(compaction_scrape.TABLE)
+        compaction_scrape.ensure_schema(conn)
         tool = conn.execute(
-            "SELECT tool, COUNT(*), SUM(chars_before), SUM(chars_after), SUM(chunks_omitted), SUM(chunks)"
+            "SELECT tool, COUNT(*), SUM(chars_before), SUM(chars_after), SUM(chunks_omitted), SUM(chunks),"
+            " SUM((chars_before - chars_after) * COALESCE(requests_after, 0))"
             " FROM compaction WHERE outcome='trimmed' AND substr(ts,1,10) >= ? GROUP BY tool", (since,)).fetchall()
         sess = conn.execute(
             "SELECT outcome, COUNT(*), SUM(msgs_kept), SUM(msgs_total), AVG(reduction_pct), SUM(requests)"
@@ -266,9 +267,10 @@ def _report_compaction(out, since):
     if not (tool or sess or passed):
         return
     out.write("\ncompaction (from transcripts) since %s\n" % since)
-    for t, n, b, a, om, ch in tool:
-        out.write("  tool %-8s n=%d chars %d -> %d saved %d (%.1f%%, ~%d tok) chunks omitted %d/%d\n" % (
-            t, n, b, a, b - a, 100.0 * (b - a) / max(1, b), (b - a) // 4, om, ch))
+    for t, n, b, a, om, ch, eff in tool:
+        out.write("  tool %-8s n=%d chars %d -> %d saved %d (%.1f%%, ~%d tok) chunks omitted %d/%d"
+                  " effective ~%d tok over later requests\n" % (
+                      t, n, b, a, b - a, 100.0 * (b - a) / max(1, b), (b - a) // 4, om, ch, (eff or 0) // 4))
     for o, n, k, tot, red, req in sess:
         out.write("  session %-9s n=%d msgs kept %s/%s avg reduction %.0f%% jev requests %s\n" % (
             o, n, k, tot, red or 0, req))
