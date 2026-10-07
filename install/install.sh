@@ -774,6 +774,22 @@ if [ "$WANT_MONITORING" = "1" ]; then
   fi
 fi
 
+# --- pricing ----------------------------------------------------------------
+# The cost cap and the metrics reports price models off the Vercel AI Gateway
+# cache (airlock/pricing.py). Hooks never fetch it themselves, so a daily
+# timer keeps the cache fresh even on a machine where no hook goes stale-then
+# -spawns-a-refresh for days.
+if [ "$WANT_GUARD" = "1" ]; then
+  step "Pricing"
+  if [ "$NO_SYSTEMD" = "1" ]; then
+    warn "skipped: no systemd. Run 'python3 -m airlock.pricing refresh' from cron."
+  else
+    install_unit "$REPO_ROOT/pricing/airlock-pricing.service" "airlock-pricing.service"
+    install_unit "$REPO_ROOT/pricing/airlock-pricing.timer" "airlock-pricing.timer"
+    enable_unit "airlock-pricing.timer"
+  fi
+fi
+
 # --- filesearch -------------------------------------------------------------
 if [ "$WANT_FILESEARCH" = "1" ]; then
   step "Filesearch"

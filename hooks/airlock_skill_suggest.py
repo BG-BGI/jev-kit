@@ -122,7 +122,7 @@ def judge(payload, ask=None):
     row.update(result)
     if result.get("reason") == "no_roster":
         return None, row
-    return suggest.context_block(result.get("skill")), row
+    return suggest.context_block(result.get("skill"), result.get("path")), row
 
 
 def emit(block):

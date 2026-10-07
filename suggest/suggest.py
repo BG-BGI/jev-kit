@@ -72,6 +72,13 @@ SUGGEST_TEXT = (
     "Relevant to the current request: %s. Ignore this if it does not fit what the "
     "user actually asked for."
 )
+# A cold skill (moved out of auto-discovery by disclosure/skills.py) is not
+# in the session roster, so the block says where its SKILL.md lives.
+COLD_SUGGEST_TEXT = (
+    "Relevant to the current request: %s. This skill is not in the session "
+    "roster; read %s and follow it. Ignore this if it does not fit what the "
+    "user actually asked for."
+)
 NONE_TEXT = "No skill in the roster appears relevant to this request."
 
 
@@ -215,6 +222,9 @@ def suggest(prompt, roster, ask, timeout_s=2.0, model=MODEL):
         result["reason"] = "nothing_fits"
         return result
     result.update({"skill": skill, "reason": "suggested"})
+    chosen = by_name.get(skill) or {}
+    if chosen.get("cold") and chosen.get("path"):
+        result.update({"cold": True, "path": chosen["path"]})
     return result
 
 
@@ -232,8 +242,13 @@ def pick(winner, fits):
     return None
 
 
-def context_block(skill):
-    body = SUGGEST_TEXT % skill if skill else NONE_TEXT
+def context_block(skill, path=None):
+    if skill and path:
+        body = COLD_SUGGEST_TEXT % (skill, path)
+    elif skill:
+        body = SUGGEST_TEXT % skill
+    else:
+        body = NONE_TEXT
     return "<skill_relevance>\n%s\n</skill_relevance>" % body
 
 
