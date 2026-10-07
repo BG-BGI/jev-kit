@@ -56,6 +56,7 @@ load-bearing on it yet.
 | **Push monitor** (`monitoring/kuma_push.py`) | Optional push to an Uptime-Kuma-style monitor you host. `heartbeat` (the default: a server, watched by its monitor's own silence timeout) or `explicit` (a workstation: the failure is stated, so silence never alerts). Any service accepting a GET with `status` and `msg` works. | no -- set `AIRLOCK_KUMA_PUSH_URL` | exercised | A status word, and in `explicit` mode which check failed: redacted, home directories replaced, capped at 200 characters. |
 | **Tuning loop** (`tuning/`) | Unattended tuning loop, its timer, promotion and threshold calibration. | no (`--tuning`) | exercised | Real Claude sessions on the account you nominate, for the judge. |
 | **Auto-updater** (`claude-update/`) | Idle-only Claude Code auto-updater and its timer. Updates only when no run is alive. | **yes** (`--claude-update`) | exercised | Nothing. An idle check and `npm install -g`. |
+| **Metrics DB** (`airlock/metrics.py`) | SQLite store at `~/.local/state/airlock/metrics.db`. Every logged action, every Jev request, and the compaction plugin's savings (scraped from transcripts with `python3 -m airlock.metrics scrape-compaction`). `python3 -m airlock.metrics report` prints the summary. | **yes** (written by every guard) | exercised | Nothing. |
 
 ## Not components, but in the tree
 

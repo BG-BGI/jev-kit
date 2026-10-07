@@ -30,7 +30,7 @@ import socket
 import sys
 import time
 
-from . import keyfile, paths
+from . import keyfile, metrics, paths
 from . import mode as mode_mod
 from .client import MODEL, _ask_via_daemon, _daemon_socket_path
 from .client import ask as client_ask
@@ -113,6 +113,7 @@ def check_daemon_ask(deadline):
     if result is None:
         return {"ok": False, "error": "no daemon response (down, refused, or malformed)", "latency_ms": wall_latency_ms}
     _response, reported_latency_ms, _reused = result
+    metrics.record_call("probe-daemon", True, reported_latency_ms or wall_latency_ms, _response, len(_PROBE_QUESTIONS))
     return {"ok": True, "latency_ms": reported_latency_ms or wall_latency_ms}
 
 
