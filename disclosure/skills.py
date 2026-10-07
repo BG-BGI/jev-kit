@@ -36,6 +36,21 @@ DEFAULT_DAYS = 30
 MANIFEST = "manifest.json"
 
 
+def _log_event(action, **fields):
+    """One best-effort metrics breadcrumb, written only after a real state
+    change (never on a no-op or refusal). The import is lazy and everything
+    is swallowed: disclosure stays stdlib-only in spirit -- it keeps working
+    on a machine without airlock -- and a log/metrics failure must never
+    fail the command (metrics.record_event's own philosophy)."""
+    try:
+        from airlock import log
+        entry = {"ts": _utcnow().isoformat(), "guard": "disclosure", "action": action}
+        entry.update(fields)
+        log.append(entry)
+    except Exception:
+        pass
+
+
 def _utcnow():
     return datetime.datetime.now(datetime.timezone.utc)
 
@@ -207,7 +222,7 @@ def cmd_apply(home, projects, days, out=None):
     cold_dir = _cold_dir(home)
     os.makedirs(cold_dir, exist_ok=True)
     moved = read_manifest(cold_dir)
-    done = 0
+    done, moved_names = 0, []
     for name, _last in cold:
         src = os.path.join(home, ".claude", "skills", name)
         dst = os.path.join(cold_dir, name)
@@ -221,9 +236,12 @@ def cmd_apply(home, projects, days, out=None):
             continue
         moved[name] = {"from": src, "ts": _utcnow().isoformat()}
         done += 1
+        moved_names.append(name)
         print("moved %s -> %s" % (src, dst), file=out)
     write_manifest(cold_dir, moved)
     print("moved %d of %d cold skills" % (done, len(cold)), file=out)
+    if done:
+        _log_event("skills_apply", moved=done, skills=moved_names)
 
 
 def cmd_restore(home, names=None, out=None):
@@ -234,6 +252,7 @@ def cmd_restore(home, names=None, out=None):
     if not targets:
         print("nothing to restore", file=out)
         return
+    restored = []
     for name in targets:
         src = os.path.join(cold_dir, name)
         dst = (moved.get(name) or {}).get("from") or os.path.join(home, ".claude", "skills", name)
@@ -251,8 +270,11 @@ def cmd_restore(home, names=None, out=None):
             print("skip %s: %s" % (name, exc), file=out)
             continue
         moved.pop(name, None)
+        restored.append(name)
         print("restored %s -> %s" % (name, dst), file=out)
     write_manifest(cold_dir, moved)
+    if restored:
+        _log_event("skills_restore", restored=len(restored), skills=restored)
 
 
 def main(argv=None):

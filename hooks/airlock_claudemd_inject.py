@@ -38,6 +38,25 @@ from pathlib import Path
 
 ANCESTORS = 3
 
+REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+
+
+def _log_inject(cwd, chars):
+    """One best-effort metrics row, written only when context was emitted.
+    One lazy import and one call, every exception swallowed: the hook's
+    latency budget is milliseconds and its stdout/exit-code contract must
+    never change because logging broke. The sys.path insert exists because
+    Python runs this file as a script, so sys.path[0] is hooks/, not the
+    repo root that holds the airlock package."""
+    try:
+        if REPO_ROOT not in sys.path:
+            sys.path.insert(0, REPO_ROOT)
+        from airlock import log
+        log.append({"guard": "disclosure", "action": "claudemd_inject",
+                    "cwd": cwd, "chars": chars})
+    except Exception:
+        pass
+
 
 def _home():
     override = os.environ.get("AIRLOCK_HOME_OVERRIDE")
@@ -83,6 +102,7 @@ def main():
                                  "</fw-dev-toolkit-instructions>" % text,
         }
     }))
+    _log_inject(str(cwd), len(text))
     return 0
 
 
