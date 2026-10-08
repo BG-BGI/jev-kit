@@ -83,10 +83,10 @@ code.
 
 | Project | Licence | Pin | Used by |
 |---|---|---|---|
-| [valentynkit/jev-belay](https://github.com/valentynkit/jev-belay) | MIT | `98f39e0` | `belay/install.sh` clones it; `belay/run.sh` is this project's own fail-open wrapper around it. |
+| [valentynkit/jev-belay](https://github.com/valentynkit/jev-belay) | MIT | `98f39e04492068e39b48962183acf43b4337da32` | `belay/install.sh` clones it; `belay/run.sh` is this project's own fail-open wrapper around it. |
 | [BG-BGI/fast-jev-compaction](https://github.com/BG-BGI/fast-jev-compaction), a fork of [tamaratran/fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction) | MIT | marketplace | `compaction/install.sh` installs it as a Claude Code plugin. Opt-in, never installed for you: read `compaction/README.md` for what it sends. |
 | [browser-use/jev-ultrafast](https://github.com/browser-use/jev-ultrafast) | MIT | `1231850` | Vendored in full at `vendor/jev-ultrafast` with `git subtree`, its LICENSE alongside it. Seven of this project's commits sit on top of the pin. |
-| [devagrawal09/jev-review](https://github.com/devagrawal09/jev-review) | MIT | `31f8960` | `review/install.sh` clones it; `review/jev-prefilter.sh` is this project's own wrapper. No code copied. |
+| [devagrawal09/jev-review](https://github.com/devagrawal09/jev-review) | MIT | `31f89602797fb7bea007f8a480bf368bf564954e` | `review/install.sh` clones it; `review/jev-prefilter.sh` is this project's own wrapper. No code copied. |
 | [abhixhek/jevcal](https://github.com/abhixhek/jevcal) | MIT | binary | `tuning/calibrate.sh` invokes it; `tuning/jevcal_export.py` writes this project's predictions into the format it reads. No code copied. |
 
 ## And TypeSafe

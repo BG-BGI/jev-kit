@@ -638,10 +638,12 @@ def _run_rule(ctx, rule, match, eff, base, override_reason, b_ms, session_id, mo
             return False
 
     # A `strict` match closes both per-call ways past a deny: the
-    # `[airlock-ok: ...]` stamp and the loop allowance. Only R11 sets it, and
-    # only because both were measured being used to keep browsing on Playwright
-    # (airlock/rules.py, prefilter_browser_driving). Every other rule keeps
-    # both, unchanged.
+    # `[airlock-ok: ...]` stamp and the loop allowance. R11 sets it because
+    # both were measured being used to keep browsing on Playwright
+    # (airlock/rules.py, prefilter_browser_driving). R1 and R9 set it because
+    # on a secret rule a second identical attempt does not un-wedge a session,
+    # it prints the secret -- the human escape there is `user_requested`
+    # softening, which both keep. Every other rule keeps both ways, unchanged.
     strict = bool(match.extra.get("strict"))
 
     if override_reason is not None:

@@ -8,7 +8,7 @@
 set -uo pipefail
 
 UPSTREAM_URL="https://github.com/valentynkit/jev-belay"
-UPSTREAM_COMMIT="98f39e0"
+UPSTREAM_COMMIT="98f39e04492068e39b48962183acf43b4337da32"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../install/portable.sh"

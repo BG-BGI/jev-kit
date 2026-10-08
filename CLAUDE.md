@@ -27,7 +27,7 @@ Everything) in place of `plocate` for file search.
 
 **Working on the code?** Three checks have to pass.
 
-- `python3 -m unittest discover -s tests`. 1310 tests on Linux. The same suite
+- `python3 -m unittest discover -s tests`. 1607 tests on POSIX. The same suite
   on native Windows Python skips the POSIX-only ones and passes the rest, and
   no test requires Windows to pass.
 - `python3 tools/check_docs.py`. It resolves every relative link in the README

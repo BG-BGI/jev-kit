@@ -10,8 +10,12 @@
 # (src/redact.ts).
 set -uo pipefail
 
-MARKETPLACE="BG-BGI/fast-jev-compaction"
+UPSTREAM_URL="https://github.com/BG-BGI/fast-jev-compaction"
+# Full 40-char SHA: a short prefix is brute-forceable by a hostile upstream,
+# and this plugin reads the TypeSafe key and ships tool output off-box.
+UPSTREAM_COMMIT="004de714d390950b54ff7d52bb72fd71e6760e54"
 PLUGIN_ID="fast-jev-compaction@fast-jev-compaction"
+COMPACTION_HOME="${COMPACTION_HOME:-$HOME/.local/share/jev-compaction}"
 MIN_VERSION="2.1.274"
 MODE="${COMPACTION_MODE:-tool}"
 case "$MODE" in tool|session|both) ;; *) echo "compaction: COMPACTION_MODE must be tool, session or both (got: $MODE)" >&2; exit 2 ;; esac
@@ -106,9 +110,36 @@ if [ -z "${TYPESAFE_API_KEY:-}" ]; then
 fi
 echo "compaction: key loaded (not printed); the plugin reads it from the environment or the key file, so it is not stored in plugin config"
 
+# --- clone the pinned commit into an immutable release directory -------------
+# `claude plugin marketplace add` has no commit pin, so the marketplace the
+# CLI reads is a local clone checked out at UPSTREAM_COMMIT, belay-style.
+command -v git >/dev/null 2>&1 || { echo "compaction: 'git' not found" >&2; exit 1; }
+TMP_CLONE="$(mktemp -d)"
+trap 'rm -rf "$TMP_CLONE"' EXIT
+
+echo "compaction: cloning $UPSTREAM_URL"
+git clone --quiet "$UPSTREAM_URL" "$TMP_CLONE" || { echo "compaction: clone failed" >&2; exit 1; }
+git -C "$TMP_CLONE" checkout -q "$UPSTREAM_COMMIT" || {
+  echo "compaction: commit $UPSTREAM_COMMIT not found; upstream may have rewritten history." >&2
+  exit 1
+}
+SHA="$(git -C "$TMP_CLONE" rev-parse --short=12 HEAD)"
+RELEASE_DIR="$COMPACTION_HOME/releases/$SHA"
+
+if [ -d "$RELEASE_DIR" ]; then
+  echo "compaction: release $SHA already present at $RELEASE_DIR; leaving it alone."
+else
+  mkdir -p "$(dirname "$RELEASE_DIR")"
+  rm -rf "$TMP_CLONE/.git"
+  mv "$TMP_CLONE" "$RELEASE_DIR"
+  echo "compaction: release $SHA -> $RELEASE_DIR"
+fi
+trap - EXIT
+rm -rf "$TMP_CLONE" 2>/dev/null || true
+
 # --- marketplace and plugin --------------------------------------------------
-echo "compaction: claude plugin marketplace add $MARKETPLACE"
-claude plugin marketplace add "$MARKETPLACE"
+echo "compaction: claude plugin marketplace add $RELEASE_DIR"
+claude plugin marketplace add "$RELEASE_DIR"
 
 echo "compaction: claude plugin install $PLUGIN_ID"
 claude plugin install "$PLUGIN_ID" --config "mode=$MODE"

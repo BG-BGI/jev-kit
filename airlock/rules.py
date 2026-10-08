@@ -412,13 +412,18 @@ def secret_path_res():
 def is_secret_path(fp):
     """True when R1 would stop a Read of `fp`: a protected secret store, or a
     path whose name suggests it may hold one. For callers outside the hook
-    (decide/server.py) that read a file on the model's behalf."""
-    if not fp or _is_safe_path(fp):
+    (decide/server.py) that read a file on the model's behalf. Judged on the
+    literal spelling AND the symlink-resolved path, like the hook itself."""
+    if not fp:
         return False
-    p = _expand(fp)
-    if any(r.search(p) for r in secret_path_res()):
-        return True
-    return any(t in p.lower() for t in AMBIGUOUS_SECRET_TOKENS)
+    for cand in _path_candidates(fp):
+        if _is_safe_path(cand):
+            continue
+        if any(r.search(cand) for r in secret_path_res()):
+            return True
+        if any(t in cand.lower() for t in AMBIGUOUS_SECRET_TOKENS):
+            return True
+    return False
 
 
 # Paths that look secret-ish but are fine, so the code pre-filter must not hit.
@@ -473,16 +478,37 @@ def _is_safe_path(tok):
     return any(r.search(tok) for r in SAFE_PATH_RES)
 
 
+def _path_candidates(tok):
+    """The expanded path and, when it differs, its symlink-resolved form.
+
+    `ln -s ~/.config/jev-kit/env /tmp/x.md` then reading /tmp/x.md must be
+    judged on the TARGET: every check runs per candidate, so a safe-LOOKING
+    name cannot launder a protected file. Resolution is skipped for tokens
+    with no separator, which keeps the realpath cost off ordinary command
+    words, and the whole thing never raises -- on any error the literal
+    spelling alone is judged, the fail-open direction."""
+    p = _expand(tok)
+    out = [p]
+    if "/" in p or "\\" in p:
+        try:
+            real = os.path.realpath(p)
+            if real and real != p:
+                out.append(real)
+        except Exception:
+            pass
+    return out
+
+
 def _secret_path_in(tokens):
     for tok in tokens:
         if tok.startswith("-"):
             continue
-        if _is_safe_path(tok):
-            continue
-        p = _expand(tok)
-        for r in secret_path_res():
-            if r.search(p):
-                return tok
+        for cand in _path_candidates(tok):
+            if _is_safe_path(cand):
+                continue
+            for r in secret_path_res():
+                if r.search(cand):
+                    return tok
     return None
 
 
@@ -512,20 +538,40 @@ def _quiet_grep(args):
 def prefilter_secret(ctx):
     tool = ctx["tool_name"]
 
-    if tool in ("Read", "NotebookRead"):
-        fp = str((ctx["tool_input"] or {}).get("file_path") or "")
-        if fp and not _is_safe_path(fp):
-            p = _expand(fp)
-            for r in secret_path_res():
-                if r.search(p):
-                    return Match(
-                        "Read of a secret store (%s): its contents would land in the transcript" % fp,
-                        R1_SUGGESTION,
-                    )
-            low = p.lower()
-            if any(t in low for t in AMBIGUOUS_SECRET_TOKENS):
-                return Match("Read of a path that may hold secrets (%s)" % fp, R1_SUGGESTION, ask=True,
-                             extra={"target": fp, "kind": "read"})
+    if tool in ("Read", "NotebookRead", "Grep", "Glob"):
+        # Grep and Glob are READERS too: `Grep(pattern=".", path=<key file>)`
+        # prints the whole file into the transcript just as surely as Read,
+        # and neither tool goes through a shell for the shell-side belt to
+        # catch. Grep/Glob name their target `path`; Read names it
+        # `file_path`. Each candidate (the literal spelling and its
+        # symlink-resolved form) is judged separately, so neither a safe
+        # extension nor a symlink launders a protected target.
+        ti = ctx["tool_input"] or {}
+        fp = str(ti.get("file_path") or ti.get("path") or "")
+        if fp:
+            for cand in _path_candidates(fp):
+                if _is_safe_path(cand):
+                    continue
+                probes = [cand]
+                if tool in ("Grep", "Glob"):
+                    # Grep/Glob take a DIRECTORY and recurse: aimed at the
+                    # kit's config dir they print the key file inside it, so
+                    # the dir is probed as if the key file were named. This
+                    # covers the two kit layouts (<dir>/env) -- the generic
+                    # stores (~/.ssh etc.) are left to the ambiguous tokens.
+                    probes.append(cand.rstrip("/\\") + "/env")
+                for p in probes:
+                    for r in secret_path_res():
+                        if r.search(p):
+                            return Match(
+                                "%s of a secret store (%s): its contents would land in the transcript" % (tool, fp),
+                                R1_SUGGESTION,
+                                extra={"strict": True},
+                            )
+                low = cand.lower()
+                if any(t in low for t in AMBIGUOUS_SECRET_TOKENS):
+                    return Match("%s of a path that may hold secrets (%s)" % (tool, fp), R1_SUGGESTION, ask=True,
+                                 extra={"target": fp, "kind": "read", "strict": True})
         return None
 
     if tool not in SHELL_TOOLS:
@@ -549,12 +595,14 @@ def prefilter_secret(ctx):
                 return Match(
                     "`%s` on a secret store (%s) would print its contents" % (prog, hit),
                     R1_SUGGESTION,
+                    extra={"strict": True},
                 )
             amb = _ambiguous_path_in(args)
             if amb:
                 return Match(
                     "`%s` on a path that may hold secrets (%s)" % (prog, amb),
-                    R1_SUGGESTION, ask=True, extra={"target": amb, "kind": "reader"},
+                    R1_SUGGESTION, ask=True,
+                    extra={"target": amb, "kind": "reader", "strict": True},
                 )
 
         # echo/printf/printenv of a secret-named variable
@@ -564,22 +612,28 @@ def prefilter_secret(ctx):
                     return Match(
                         "`%s` would print $%s, whose name says it holds a secret" % (prog, name),
                         R1_SUGGESTION,
+                        extra={"strict": True},
                     )
         if prog == "printenv":
             if not args:
-                return Match("bare `printenv` dumps every variable, secrets included", R1_SUGGESTION)
+                return Match("bare `printenv` dumps every variable, secrets included", R1_SUGGESTION,
+                             extra={"strict": True})
             for a in args:
                 if SECRET_VAR_NAME_RE.search(a):
-                    return Match("`printenv %s` would print a secret value" % a, R1_SUGGESTION)
+                    return Match("`printenv %s` would print a secret value" % a, R1_SUGGESTION,
+                                 extra={"strict": True})
 
         # an unfiltered environment dump
         if prog in ("env", "set", "export", "declare") and not args:
             if prog in ("env", "set"):
-                return Match("bare `%s` dumps every variable, secrets included" % prog, R1_SUGGESTION)
+                return Match("bare `%s` dumps every variable, secrets included" % prog, R1_SUGGESTION,
+                             extra={"strict": True})
         if prog == "export" and args == ["-p"]:
-            return Match("`export -p` dumps every exported variable, secrets included", R1_SUGGESTION)
+            return Match("`export -p` dumps every exported variable, secrets included", R1_SUGGESTION,
+                         extra={"strict": True})
         if prog == "declare" and args and args[0] in ("-x", "-p"):
-            return Match("`declare %s` dumps every variable, secrets included" % args[0], R1_SUGGESTION)
+            return Match("`declare %s` dumps every variable, secrets included" % args[0], R1_SUGGESTION,
+                         extra={"strict": True})
 
         # curl -v with an Authorization header on the command line
         if prog in ("curl", "http", "wget"):
@@ -590,15 +644,20 @@ def prefilter_secret(ctx):
                     "`%s` in verbose mode echoes the Authorization header, including the token" % prog,
                     "Drop -v/--verbose when a credential is on the command line, or move the token into a "
                     "variable and pipe the output through sed 's/apikey_[A-Za-z0-9_]*/[REDACTED]/g'.",
+                    extra={"strict": True},
                 )
     return None
 
 
 def questions_secret(ctx, match):
+    from . import redact
+    # Redacted like every other state sent to Jev (see redact.py's contract).
+    # This rule's ambiguous branch fires exactly when the command text looks
+    # token-ish, so raw text here is the likeliest to carry a literal secret.
     state = {
-        "command": ctx["command"][:2000],
+        "command": redact.redact_and_truncate_command(ctx["command"] or "")[:2000],
         "tool_name": ctx["tool_name"],
-        "target": match.extra.get("target", ""),
+        "target": redact.redact(match.extra.get("target", ""))[:600],
     }
     qs = {
         "prints_a_secret": {
@@ -680,7 +739,8 @@ def prefilter_claude_api(ctx):
 
 
 def questions_claude_api(ctx, match):
-    state = {"skill": "claude-api", "args": match.extra.get("purpose", "")[:2000]}
+    from . import redact
+    state = {"skill": "claude-api", "args": redact.redact(match.extra.get("purpose", ""))[:2000]}
     qs = {
         "purpose": {
             "type": "choice",
@@ -910,7 +970,9 @@ def prefilter_long_run(ctx):
 
 
 def questions_long_run(ctx, match):
-    state = {"command": ctx["command"][:2000], "segment": match.extra.get("segment", "")}
+    from . import redact
+    state = {"command": redact.redact_and_truncate_command(ctx["command"] or "")[:2000],
+             "segment": redact.redact(match.extra.get("segment", ""))[:600]}
     qs = {
         "runs_over_two_minutes": {
             "type": "noul",
@@ -1260,7 +1322,8 @@ def prefilter_commit_secret(ctx):
         git_write = True
         hit = _secret_path_in(args[1:])
         if hit:
-            return Match("`git %s` would stage a secret file (%s)" % (args[0], hit), R9_SUGGESTION)
+            return Match("`git %s` would stage a secret file (%s)" % (args[0], hit), R9_SUGGESTION,
+                         extra={"strict": True})
 
     if not git_write:
         return None
@@ -1275,6 +1338,7 @@ def prefilter_commit_secret(ctx):
             "this command stages or commits something carrying a credential "
             "(%s, starts `%s`)" % (credential["kind"], credential["redacted"]),
             R9_SUGGESTION,
+            extra={"strict": True},
         )
     return None
 
@@ -1837,6 +1901,103 @@ def prefilter_browser_driving(ctx):
     )
 
 
+# --- R12: self-tamper ---------------------------------------------------------
+#
+# The guard's own control surface: the kill switch (`disabled`), the mode
+# file, rules.json, tiers.json, the key-file pointer, both key files, and the
+# deployed release the hooks execute from. Without this rule a prompt-injected
+# session turns enforcement off with ONE silent Write -- the file-write tools
+# matched no rule at all, and `touch ~/.config/airlock/disabled` matched
+# nothing on the shell side either.
+#
+# What this rule is NOT: tamper-proofing. The agent and the guard are the same
+# OS user, everything fails open, and docs/rules.md says so plainly. What it
+# buys is that the one-call silent kill becomes a logged deny the human can
+# see. `strict` is set for the same reason R11 sets it: a stamp or a repeat
+# here is the attack working, not a human deciding. The honest ways to touch
+# these files remain -- a human edits them in their own shell, outside the
+# session, which this hook never sees -- and a typed user request still
+# softens the deny through `user_requested`, like every non-`no_soften` rule.
+
+R12_SUGGESTION = (
+    "This path is part of airlock's own control surface (kill switch, mode, "
+    "rules.json, key file, or the deployed hooks). Leave it alone and tell "
+    "the human what you wanted changed; a human disarms or reconfigures "
+    "airlock in their own shell, not through a session's tool calls."
+)
+
+# Programs whose presence in a segment that names a control-surface path means
+# a WRITE. Readers (cat, grep, ls, stat...) stay allowed: looking at the
+# config is fine, changing it is not. `sed` counts only with -i; a redirect
+# (`>`) in the segment counts regardless of program.
+_TAMPER_WRITE_PROGS = {
+    "rm", "mv", "cp", "tee", "touch", "ln", "truncate", "dd", "install",
+    "chmod", "chown", "shred", "unlink", "mkdir", "rmdir", "sed",
+}
+
+_TAMPER_CACHE = {"res": None}
+
+
+def _tamper_path_res():
+    """Literal regexes for the control-surface directories, resolved from
+    airlock/paths.py so env-var overrides are honoured, built once. Directory
+    regexes end at a word boundary, so they also match every file inside --
+    and never match this repo's own `airlock/` source tree, whose paths do
+    not live under the config, kit-config or install homes. Never raises;
+    an empty tuple just means the rule stays silent (fail open)."""
+    if _TAMPER_CACHE["res"] is not None:
+        return _TAMPER_CACHE["res"]
+    res = []
+    for getter in (paths.config_dir, paths.kit_config_dir, paths.install_home,
+                   paths.state_dir):
+        try:
+            res.extend(_literal_path_re(str(getter())))
+        except Exception:
+            continue
+    _TAMPER_CACHE["res"] = tuple(res)
+    return _TAMPER_CACHE["res"]
+
+
+def prefilter_self_tamper(ctx):
+    res = _tamper_path_res()
+    if not res:
+        return None
+    tool = ctx["tool_name"]
+
+    if tool in ("Write", "Edit", "NotebookEdit"):
+        ti = ctx["tool_input"] or {}
+        fp = str(ti.get("file_path") or ti.get("notebook_path") or "")
+        if not fp:
+            return None
+        for cand in _path_candidates(fp):
+            if any(r.search(cand) for r in res):
+                return Match(
+                    "%s into airlock's own control surface (%s)" % (tool, fp),
+                    R12_SUGGESTION,
+                    extra={"strict": True},
+                )
+        return None
+
+    if tool not in SHELL_TOOLS:
+        return None
+    for seg in ctx["segments"]:
+        # The literal regexes carry both the absolute form and the
+        # home-relative tail, so `~/.config/airlock/...`, `$HOME/...` and the
+        # spelled-out path all match without expanding the segment.
+        if not any(r.search(seg) for r in res):
+            continue
+        prog, args = program_of(seg)
+        if prog == "sed" and not any(a.startswith("-i") or a == "--in-place" for a in args):
+            continue
+        if prog in _TAMPER_WRITE_PROGS or ">" in seg:
+            return Match(
+                "`%s` writes into airlock's own control surface" % (prog or "this segment"),
+                R12_SUGGESTION,
+                extra={"strict": True},
+            )
+    return None
+
+
 # Rules that can explain their own silence. Keyed by rule id so the hot path
 # pays nothing for the rules that cannot.
 SUPPRESSION_BY_RULE = {"R10-general-risk": general_risk_suppression}
@@ -1858,7 +2019,7 @@ def suppression_reason(rule_id, answers):
 RULES = [
     Rule(
         id="R1-secret-exposure",
-        tools=SHELL_TOOLS + ("Read", "NotebookRead"),
+        tools=SHELL_TOOLS + ("Read", "NotebookRead", "Grep", "Glob"),
         action="deny",
         prefilter=prefilter_secret,
         questions=questions_secret,
@@ -1967,6 +2128,17 @@ RULES = [
             "goals for roughly 1/233rd of the Claude spend (README, browse/). A "
             "Playwright MCP browsing call is pointed at it. Code only, no Jev "
             "question; the Playwright servers stay registered.",
+    ),
+    Rule(
+        id="R12-self-tamper",
+        tools=SHELL_TOOLS + ("Write", "Edit", "NotebookEdit"),
+        action="deny",
+        prefilter=prefilter_self_tamper,
+        why="A guard the policed agent can switch off in one silent call is not "
+            "a guard. Writes to airlock's own config, key file, state and "
+            "deployed hooks are denied and logged; reads stay free. Code only. "
+            "docs/rules.md states the honest limit: same-user code can still "
+            "win -- this makes the attempt loud, nothing more.",
     ),
 ]
 

@@ -143,6 +143,110 @@ class TestR1Secret(unittest.TestCase):
         self.assertFalse(rules.dry_run(c, ask=ask_low_margin, overrides={})[0]["fires"])
         self.assertFalse(rules.dry_run(c, ask=ask_no, overrides={})[0]["fires"])
 
+    def test_grep_tool_on_secret_store_denies(self):
+        """The native Grep tool prints matching lines like a shell grep, but
+        never goes through a shell; it is a reader and R1 covers it."""
+        for path in ("%s/.config/jev-kit/env" % HOME,
+                     "%s/.config/airlock/env" % HOME):
+            c = rules.build_ctx(
+                {"tool_name": "Grep", "tool_input": {"pattern": ".", "path": path}}, "Grep"
+            )
+            rows = fired(c, self.RID)
+            self.assertTrue(rows and rows[0]["fires"] is True, path)
+
+    def test_grep_tool_over_kit_config_dir_denies(self):
+        """Aimed at the DIRECTORY, Grep recurses into the key file inside it."""
+        c = rules.build_ctx(
+            {"tool_name": "Grep",
+             "tool_input": {"pattern": ".", "path": "%s/.config/jev-kit" % HOME}}, "Grep"
+        )
+        rows = fired(c, self.RID)
+        self.assertTrue(rows and rows[0]["fires"] is True)
+
+    def test_grep_tool_on_ordinary_dir_does_not_match(self):
+        c = rules.build_ctx(
+            {"tool_name": "Grep", "tool_input": {"pattern": "x", "path": "/tmp/project"}}, "Grep"
+        )
+        self.assertEqual(fired(c, self.RID), [])
+
+    @posix_only
+    def test_symlink_to_secret_store_denies(self):
+        """A symlink with a safe-looking name is judged on its target: the
+        laundering two-step (`ln -s <key file> /tmp/x.md`, then Read /tmp/x.md)
+        must hit R1 on the second step."""
+        d = tempfile.mkdtemp()
+        link = os.path.join(d, "notes.md")
+        os.symlink("%s/.config/jev-kit/env" % HOME, link)
+        try:
+            c = rules.build_ctx(
+                {"tool_name": "Read", "tool_input": {"file_path": link}}, "Read"
+            )
+            rows = fired(c, self.RID)
+            self.assertTrue(rows and rows[0]["fires"] is True, link)
+            rows = fired(ctx_bash("cat %s" % link), self.RID)
+            self.assertTrue(rows and rows[0]["fires"] is True, "shell cat via symlink")
+        finally:
+            os.unlink(link)
+            os.rmdir(d)
+
+    def test_r1_matches_are_strict(self):
+        """A second identical attempt at a denied secret read prints the
+        secret; R1 closes the loop allowance and the stamp (strict)."""
+        m = rules.prefilter_secret(ctx_bash("cat ~/.config/jev-kit/env"))
+        self.assertIsNotNone(m)
+        self.assertTrue(m.extra.get("strict"), "R1 deny should carry strict")
+
+
+class TestR12SelfTamper(unittest.TestCase):
+    RID = "R12-self-tamper"
+
+    def _write_ctx(self, tool, path):
+        key = "notebook_path" if tool == "NotebookEdit" else "file_path"
+        return rules.build_ctx({"tool_name": tool, "tool_input": {key: path}}, tool)
+
+    def test_write_tools_on_control_surface_deny(self):
+        for tool, path in (
+            ("Write", "%s/.config/airlock/disabled" % HOME),
+            ("Write", "%s/.config/airlock/rules.json" % HOME),
+            ("Edit", "%s/.config/airlock/mode" % HOME),
+            ("Edit", "%s/.config/jev-kit/env" % HOME),
+            ("Write", "%s/.local/share/airlock/current/hooks/airlock.py" % HOME),
+        ):
+            rows = fired(self._write_ctx(tool, path), self.RID)
+            self.assertTrue(rows and rows[0]["fires"] is True, "%s %s" % (tool, path))
+
+    def test_shell_writes_to_control_surface_deny(self):
+        for c in (
+            "touch ~/.config/airlock/disabled",
+            "rm ~/.config/jev-kit/env",
+            "echo off > ~/.config/airlock/mode",
+            'printf \'{"R1-secret-exposure":"off"}\' > ~/.config/airlock/rules.json',
+            "cp /tmp/evil.py ~/.local/share/airlock/current/hooks/airlock.py",
+            "sed -i 's/deny/off/' $HOME/.config/airlock/rules.json",
+        ):
+            rows = fired(ctx_bash(c), self.RID)
+            self.assertTrue(rows and rows[0]["fires"] is True, c)
+
+    def test_reads_and_unrelated_paths_do_not_match(self):
+        for c in (
+            "cat ~/.config/airlock/rules.json",
+            "ls -la ~/.config/airlock/",
+            "stat ~/.config/airlock/disabled",
+            "sed 's/a/b/' ~/.config/airlock/rules.json",
+            "set -a; . ~/.config/jev-kit/env; set +a",
+            "touch /tmp/airlock-scratch",
+            "rm airlock/mode.py",
+        ):
+            self.assertEqual(fired(ctx_bash(c), self.RID), [], c)
+        # Editing this repo's own source is not the control surface.
+        rows = fired(self._write_ctx("Edit", "/Users/dev/jev-kit/airlock/mode.py"), self.RID)
+        self.assertEqual(rows, [])
+
+    def test_r12_is_strict(self):
+        m = rules.prefilter_self_tamper(ctx_bash("touch ~/.config/airlock/disabled"))
+        self.assertIsNotNone(m)
+        self.assertTrue(m.extra.get("strict"), "R12 deny should carry strict")
+
 
 class TestOtherRules(unittest.TestCase):
     def test_r2_claude_api_with_purpose_asks(self):
@@ -1143,8 +1247,11 @@ class TestR11Enforce(unittest.TestCase):
         self.assertTrue(self.logged[-1]["would_enforce"])
 
 
-class TestStrictIsR11Only(unittest.TestCase):
-    """Closing the two escapes is scoped to R11. Every other rule keeps both."""
+class TestStrictScope(unittest.TestCase):
+    """Closing the two escapes is scoped to R11 (measured abuse), R1 and R9
+    (a repeated secret read/stage leaks the secret, so the repeat and the
+    stamp are the attack working) and R12 (the guard's own control surface).
+    Every other rule keeps both."""
 
     def setUp(self):
         self.logged = []
@@ -1155,7 +1262,7 @@ class TestStrictIsR11Only(unittest.TestCase):
         ov.start()
         self.addCleanup(ov.stop)
 
-    def test_only_r11_carries_strict(self):
+    def test_strict_rules_are_exactly_the_four(self):
         strict = set()
         for rule in rules.RULES:
             if rule.prefilter is None:
@@ -1163,6 +1270,15 @@ class TestStrictIsR11Only(unittest.TestCase):
             for ctx in (rules.build_ctx(
                             {"tool_name": "Bash", "cwd": "/tmp",
                              "tool_input": {"command": "sudo rm -rf /"}}, "Bash"),
+                        rules.build_ctx(
+                            {"tool_name": "Bash", "cwd": "/tmp",
+                             "tool_input": {"command": "cat ~/.config/jev-kit/env"}}, "Bash"),
+                        rules.build_ctx(
+                            {"tool_name": "Bash", "cwd": "/tmp",
+                             "tool_input": {"command": "git add .env"}}, "Bash"),
+                        rules.build_ctx(
+                            {"tool_name": "Bash", "cwd": "/tmp",
+                             "tool_input": {"command": "touch ~/.config/airlock/disabled"}}, "Bash"),
                         rules.build_ctx(
                             {"tool_name": "mcp__playwright__browser_click",
                              "cwd": "/tmp", "tool_input": {"element": "a link"}},
@@ -1173,7 +1289,8 @@ class TestStrictIsR11Only(unittest.TestCase):
                     continue
                 if match is not None and match.extra.get("strict"):
                     strict.add(rule.id)
-        self.assertEqual(strict, {"R11-browse-via-jev"})
+        self.assertEqual(strict, {"R11-browse-via-jev", "R1-secret-exposure",
+                                  "R9-commit-secret", "R12-self-tamper"})
 
     def _sudo(self, **ti):
         payload = {"session_id": "sess-strict", "cwd": "/tmp", "tool_name": "Bash",

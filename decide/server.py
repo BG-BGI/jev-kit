@@ -134,7 +134,9 @@ def read_file(path):
     """The text of a file the model named, or DecideError. Relative paths are
     taken from the server's working directory, which is the session's."""
     from airlock import rules
-    full = os.path.abspath(os.path.expanduser(str(path)))
+    # realpath, not abspath: open() follows symlinks, so the secret-path
+    # check must run on the resolved target or a symlink walks past it.
+    full = os.path.realpath(os.path.expanduser(str(path)))
     if rules.is_secret_path(full):
         raise DecideError("refusing %s: it looks like a secret store" % path)
     if not os.path.isfile(full):

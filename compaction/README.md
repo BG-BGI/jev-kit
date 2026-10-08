@@ -70,7 +70,10 @@ COMPACTION_MODE=session compaction/install.sh          # or session / both
    account's `settings.json`, and if not, **prints** the edit and stops. It
    does not write settings.json itself;
 3. checks that a key is loadable (never echoed, never logged);
-4. runs `claude plugin marketplace add BG-BGI/fast-jev-compaction`;
+4. clones `BG-BGI/fast-jev-compaction` at a pinned full-SHA commit into
+   `~/.local/share/jev-compaction/releases/<sha>` and runs
+   `claude plugin marketplace add` on that local release, so the install never
+   tracks the repo's HEAD;
 5. runs `claude plugin install fast-jev-compaction@fast-jev-compaction --config mode=$COMPACTION_MODE`.
 
 To change mode later, uninstall and re-run with the other `COMPACTION_MODE`.

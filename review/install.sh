@@ -10,7 +10,7 @@
 set -uo pipefail
 
 UPSTREAM_URL="https://github.com/devagrawal09/jev-review"
-UPSTREAM_COMMIT="31f8960"
+UPSTREAM_COMMIT="31f89602797fb7bea007f8a480bf368bf564954e"
 NODE_MAJOR="24"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

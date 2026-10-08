@@ -6,8 +6,8 @@
 # the result to the push monitor. AIRLOCK_KUMA_PUSH_MODE in the same key file
 # chooses between `heartbeat` (the default: a server, watched by its monitor's
 # own silence timeout) and `explicit` (a workstation: the failure is stated,
-# so silence never alerts). Both are read from the key file by the `set -a`
-# block below, so neither needs mentioning here again. Exits with airlock.health's own exit code
+# so silence never alerts). Both are parsed out of the key file by the
+# allowlist block below, so neither needs mentioning here again. Exits with airlock.health's own exit code
 # (0 healthy, 1 degraded, 2 down) so `systemctl status` reflects it.
 set -uo pipefail
 
@@ -30,7 +30,7 @@ chmod 600 "$LOG_FILE" 2>/dev/null || true
 # key file (AIRLOCK_KEY_FILE, default ~/.config/jev-kit/env), loaded the exact
 # same redacted way the rest of airlock loads TYPESAFE_API_KEY -- never
 # printed, never put on a command line. AIRLOCK_KUMA_PUSH_MODE rides along
-# in the same file and the same `set -a`.
+# in the same file.
 # Key-file resolution: the ONE shell implementation, shared with every other
 # component here. The order and the pointer-file trust rules are documented in
 # airlock/keyfile.py's module docstring. Fails open if the helper is missing.
@@ -45,9 +45,29 @@ else
     printf '%s\n' "$HOME/.config/jev-kit/env"
   }
 fi
-set -a
-. "$(airlock_key_file)" 2>/dev/null || true
-set +a
+# Parse NAME=value, never source: this timer runs every 5 minutes and the
+# key file is writable by the same user as any agent session, so sourcing it
+# would execute whatever a compromised session wrote there. Only the names
+# kuma_push.py reads (URL_ENV + MODE_ENV) are exported; one layer of matching
+# quotes and an optional `export ` prefix are accepted, nothing is evaluated.
+KEY_FILE_PATH="$(airlock_key_file)"
+if [ -r "$KEY_FILE_PATH" ]; then
+  while IFS= read -r kv || [ -n "$kv" ]; do
+    kv="${kv#export }"
+    case "$kv" in
+      AIRLOCK_KUMA_PUSH_URL=*|GS_KUMA_AIRLOCK_PUSH_URL=*|GS_KUMA_JEV_PUSH_URL=*|\
+      AIRLOCK_KUMA_PUSH_MODE=*|GS_KUMA_AIRLOCK_PUSH_MODE=*)
+        kv_name="${kv%%=*}"
+        kv_value="${kv#*=}"
+        case "$kv_value" in
+          \"*\") kv_value="${kv_value#\"}"; kv_value="${kv_value%\"}" ;;
+          \'*\') kv_value="${kv_value#\'}"; kv_value="${kv_value%\'}" ;;
+        esac
+        export "$kv_name=$kv_value"
+        ;;
+    esac
+  done < "$KEY_FILE_PATH"
+fi
 
 if [ -n "${AIRLOCK_KUMA_PUSH_URL:-}" ] || [ -n "${GS_KUMA_AIRLOCK_PUSH_URL:-}" ] \
    || [ -n "${GS_KUMA_JEV_PUSH_URL:-}" ]; then

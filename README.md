@@ -346,13 +346,17 @@ Full tables, methods and the known limits: **[docs/measurements.md](docs/measure
 - **An override stamp.** `[airlock-ok: <reason>]` in a call's description gets
   past any deny, with the reason recorded.
 - **Loop protection.** The same call is never denied twice in ten minutes.
-- **One rule ignores those two.** `R11-browse-via-jev` is a cost steer with an
-  equally good tool sitting in the same session, so a stamp on it is logged and
-  refused and a repeat is denied again. The other nets still cover it, and only
-  the user turns it off. Its one door is the `browse` tool failing: a `blocked`
-  or errored `browse` call turns the rule into a warn for thirty minutes.
+- **Four rules ignore those two.** On `R11-browse-via-jev`, `R1-secret-exposure`,
+  `R9-commit-secret` and `R12-self-tamper`, a stamp is logged and refused and a
+  repeat is denied again. The reason is the same for all four: there, the stamp
+  and the repeat were the attack working, not a human deciding. On a secret
+  rule the second attempt prints the secret, and on the tamper rule it disarms
+  the guard. The other nets still cover them, R1 and R9 keep the
+  `user_requested` softening, and docs/rules.md has each rule's reasoning.
 - **A kill switch that beats the mode.** `AIRLOCK_DISABLE=1`, or
-  `~/.config/airlock/disabled`, or `echo off > ~/.config/airlock/mode`.
+  `~/.config/airlock/disabled`, or `echo off > ~/.config/airlock/mode`, typed
+  in your own terminal. From inside a session, `R12-self-tamper` denies an
+  agent writing those same files, and says so in the log.
 - **Confidence bars.** Where Jev decides, a deny needs confidence of at least
   0.8 and a margin of at least 0.4 over the runner-up. Rewrite mode needs 0.9
   and 0.5.
@@ -426,10 +430,13 @@ Yes it can, and there are four ways out, in rising order of permanence:
 Loop protection also means the same call is never denied twice in ten minutes,
 so a retry gets through on its own.
 
-`R11-browse-via-jev` is the exception to the first and the last of those. A
-stamp on it is logged and refused, and a repeat is denied again. Use `browse`.
-If `browse` comes back `blocked` or errors, Playwright is yours for the next
-thirty minutes of that session, with no stamp needed. Past that, ask the person
+Four rules are exceptions to the first and the last of those:
+`R11-browse-via-jev`, `R1-secret-exposure`, `R9-commit-secret` and
+`R12-self-tamper`. On them a stamp is logged and refused, and a repeat is
+denied again. For R11, use `browse`; if `browse` comes back `blocked` or
+errors, Playwright is yours for the next thirty minutes of that session, with
+no stamp needed. For the secret and tamper rules, say what you need and let
+the person run it or change the config themselves. Past that, ask the person
 to switch the rule off.
 
 </details>

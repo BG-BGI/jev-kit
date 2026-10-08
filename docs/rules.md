@@ -8,7 +8,7 @@ request, no log row, no subprocess.
 
 | id | tools | default | decided by | what it is for |
 |---|---|---|---|---|
-| `R1-secret-exposure` | Bash, Read | deny | code, Jev for an ambiguous path | reading or echoing a secret into the transcript |
+| `R1-secret-exposure` | Bash, Read, Grep, Glob | deny | code, Jev for an ambiguous path | reading or echoing a secret into the transcript, via a shell or via the native file tools; paths are judged symlink-resolved |
 | `R2-claude-api-skill` | Skill | deny (warn with no stated purpose) | Jev | loading a 324,006-token reference for a price lookup |
 | `R3-whole-suite-or-uncapped-build` | Bash | warn | code only | the whole test suite, or a build with uncapped parallelism |
 | `R4-long-work-bare-shell` | Bash | warn | code, Jev for the ambiguous cases | long work on a shell a dropped connection would kill |
@@ -20,6 +20,7 @@ request, no log row, no subprocess.
 | `R9-commit-secret` | Bash | deny | code + a local credential belt | staging or committing a secret |
 | `R10-general-risk` | Bash | **warn only, never deny** | code pre-filter, then a Jev Score + `user_requested` | the catch-all: a call no other rule covers that plainly reaches outside the working tree |
 | `R11-browse-via-jev` | every tool (only `mcp__` names can match) | deny | code only | a Playwright MCP browsing call, when the kit ships a Jev-decided `browse` tool |
+| `R12-self-tamper` | Bash, Write, Edit, NotebookEdit | deny | code only | a write into airlock's own control surface: the kill switch, mode, `rules.json`, the key file, state, or the deployed hooks |
 
 `R8-tool-choice-guard`'s graphify-suggestion branch only exists when the search
 root carries a graph (`graphify-out/graph.json`). With no graph the branch is
@@ -32,12 +33,22 @@ ten minutes, a hard budget, and fail-open on any error. Where Jev is involved,
 a deny also needs a confidence of at least 0.8 and a margin of at least 0.4
 over the runner-up.
 
-`R11-browse-via-jev` is the exception, and the only one. It ignores the stamp
-and the loop allowance both, for the reason its own section below gives. The
-budget and the fail-open still apply to it. It has one door, and only the
-`browse` tool itself opens it: a `browse` call that comes back `blocked`, or
-errors, turns this rule into a warn for the next thirty minutes of that
-session.
+Four rules are `strict`: they ignore the stamp and the loop allowance both.
+The budget and the fail-open still apply to them, and all but R11 keep the
+`user_requested` softening below.
+
+- `R11-browse-via-jev`, for the reason its own section below gives. It has one
+  door, and only the `browse` tool itself opens it: a `browse` call that comes
+  back `blocked`, or errors, turns this rule into a warn for the next thirty
+  minutes of that session.
+- `R1-secret-exposure` and `R9-commit-secret`, because on a secret rule the
+  loop allowance is not an un-wedge, it is the leak: the second identical
+  attempt prints or stages the secret. A stamp on a secret read is likewise
+  the attack working, not a human deciding -- a human who wants their own key
+  printed types the command in their own shell.
+- `R12-self-tamper`, for the same reason: a stamped or repeated write to the
+  kill switch is the guard being disarmed, and a human disarms airlock in
+  their own shell, where no hook runs.
 
 A deny is also softened to a warn when the user's own recent words asked for the
 thing. That check reads only what the person typed, never a tool result or a
@@ -286,12 +297,12 @@ steps works and a goal written as an outcome does not. "Open the article,
 click the link to X, then click the link to Y, scroll if the link is not in
 view" is the shape that gets there.
 
-There is no per-call way past it. This is the one rule that ignores both
-safety nets every other deny keeps. An `[airlock-ok: <reason>]` stamp is
+There is no per-call way past it. An `[airlock-ok: <reason>]` stamp is
 logged as `override_refused` and the call is denied anyway, and the identical
 call repeated inside the loop window is denied again rather than allowed. The
 match carries `strict` in its `extra`, which is where `airlock/enforce.py`
-reads that from; no other rule sets it.
+reads that from; R1, R9 and R12 set it too, for the reasons the strict list
+above gives.
 
 Both nets were closed because both were measured being used to stay on
 Playwright. A subagent given a plain click-through-Wikipedia task wrote
@@ -347,6 +358,34 @@ asks. Turning the rule off is the user's call, and they make it by putting
 
 This is a cost steer, not a security control. It removes nothing: the
 Playwright MCP servers stay registered.
+
+## `R12-self-tamper`: the guard's own control surface
+
+Airlock's configuration is ordinary files owned by the user: the kill switch
+(`~/.config/airlock/disabled`), the mode file, `rules.json`, `tiers.json`, the
+key-file pointer, the key file itself (`~/.config/jev-kit/env`), the state dir
+and the deployed release the hooks execute from (`~/.local/share/airlock`).
+Before this rule, a write to any of them matched nothing: one silent `Write`
+tool call, or a `touch`, turned enforcement off for good, with no log row.
+
+R12 denies a write into those paths, from the file-write tools (`Write`,
+`Edit`, `NotebookEdit`) and from shell segments that name one of them with a
+writing program or a redirect. Reads stay free: `cat` on `rules.json` or `ls`
+of the config dir never matches. The directories are resolved through
+`airlock/paths.py` at hook time, so `AIRLOCK_CONFIG_DIR`-style overrides are
+protected wherever they point, and a checkout of this repo's own `airlock/`
+source tree never matches. It is code only; Jev is not asked anything.
+
+**What this rule is, honestly.** It is not tamper-proofing, because none is
+possible from this layout: the agent and the guard run as the same OS user,
+every rule fails open, and same-user code that avoids the watched tools (a
+Python one-liner opening the file, for instance) still wins. Enforce mode is
+therefore **advisory against a determined, prompt-injected agent**: what R12
+changes is that the cheap, one-call silent kill becomes a logged, denied
+attempt a human can notice. The legitimate ways to change these files are
+unaffected -- a human edits them in their own terminal, where no hook runs,
+and a change the user actually asked for in the session still softens the
+deny through `user_requested`.
 
 ## `R10-general-risk`: the fallback
 
