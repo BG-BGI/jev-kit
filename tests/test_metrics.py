@@ -43,6 +43,13 @@ class TestMetrics(unittest.TestCase):
         log.append({"guard": "rules", "action": "allow"}, log_file=f)
         self.assertEqual(self.rows("SELECT denied FROM events ORDER BY id"), [(0,), (1,), (1,), (0,)])
 
+    def test_failure_verdict_last_error_is_not_its_own_error(self):
+        f = self.tmp / "x.jsonl"
+        log.append({"guard": "failure_verdict", "verdict": "retry", "last_error": "Exit code 1",
+                    "latency_ms": 9}, log_file=f)
+        log.append({"guard": "other", "last_error": "boom"}, log_file=f)
+        self.assertEqual(self.rows("SELECT error FROM events ORDER BY id"), [(None,), ("boom",)])
+
     def test_backfill_idempotent(self):
         (self.tmp / "decide.jsonl").write_text(
             json.dumps({"ts": "2026-10-07T00:00:00+00:00", "guard": "decide", "latency_ms": 9,

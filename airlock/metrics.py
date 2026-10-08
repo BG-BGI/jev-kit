@@ -102,7 +102,10 @@ def _flatten(entry, source):
     out_tok = _int(usage.get("output_tokens"))
     latency = _int(entry.get("latency_ms"))
     action = entry.get("action") or entry.get("verdict") or entry.get("status") or entry.get("skill")
-    error = entry.get("error") or entry.get("last_error")
+    error = entry.get("error")
+    # failure_verdict's last_error is the failed tool call it judged, not an error of its own.
+    if error is None and entry.get("guard") != "failure_verdict":
+        error = entry.get("last_error")
     cost = entry.get("jev_cost_usd")
     # Guards log action="deny" on every row and put the verdict in would_deny;
     # rows from other components have no would_deny and use action alone.
