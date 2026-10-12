@@ -13,7 +13,7 @@ set -uo pipefail
 UPSTREAM_URL="https://github.com/BG-BGI/fast-jev-compaction"
 # Full 40-char SHA: a short prefix is brute-forceable by a hostile upstream,
 # and this plugin reads the TypeSafe key and ships tool output off-box.
-UPSTREAM_COMMIT="004de714d390950b54ff7d52bb72fd71e6760e54"
+UPSTREAM_COMMIT="297fcb5d9e18c58d03351d8e64a8b1b331170bf2"
 PLUGIN_ID="fast-jev-compaction@fast-jev-compaction"
 COMPACTION_HOME="${COMPACTION_HOME:-$HOME/.local/share/jev-compaction}"
 MIN_VERSION="2.1.274"

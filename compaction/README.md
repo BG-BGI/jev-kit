@@ -46,6 +46,49 @@ It is **off by default** everywhere in this repository. `install/install.sh`
 never turns it on without `--compaction`, and even then only prints the
 warning; you run `compaction/install.sh` yourself.
 
+## Recall: getting the cut text back
+
+In `tool` mode the plugin keeps what it cuts. Before it drops a line range, it
+pipes the range to `python3 -m airlock.recall put`, which stores it in
+`recall.db` in the airlock state directory (mode 600, in a 700 directory). The
+omission note then names a ref:
+
+```
+[fast-jev-compaction omitted Bash output lines 21-440 (420 lines); recall ref=r_ab12cd34 range=21-440 to restore, or re-run with a narrower command]
+```
+
+The plugin also registers a tool, `mcp__fast-jev-compaction__recall`, taking
+`ref`, an optional `range` and an optional `maxChars`. The model calls it only
+when it needs the text, so the text stays out of context until then. Each line
+comes back prefixed with its original line number.
+
+Nothing here leaves the machine. Rows expire after 7 days and the table is held
+under 50 MB, both enforced on every write. An expired or unknown ref returns a
+message that says to re-run the command.
+
+The store keeps the cut text as it was. It is **not** redacted, because a
+recall that returned altered text would be wrong. The 600 mode, the TTL and the
+size cap are the protection. Anything the redactor would have caught is on
+disk for up to a week.
+
+Recall needs the jev-kit `airlock` package (`~/.local/share/airlock/current`, or
+`$AIRLOCK_HOME/current`) and `python3`. Without them the plugin keeps the old
+note and the output is compacted as before.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `recallEnabled` | `true` | `false` turns off storing and the tool. |
+| `recallTtlDays` | `7` | Age at which stored text is deleted. |
+| `recallMaxMB` | `50` | Oldest refs are deleted past this size. |
+| `recallMaxChars` | `20000` | Most characters one recall call returns. |
+
+Manage the store by hand with `python3 -m airlock.recall list`, `show REF`,
+`prune` and `purge`. `purge` deletes everything. The model is not told to touch
+the database, and `R12-self-tamper` still blocks a Bash call that tries.
+
+Allow the tool once in `settings.json` (`permissions.allow`:
+`mcp__fast-jev-compaction__recall`) so a recall does not prompt each time.
+
 ## Requirements
 
 - Claude Code **2.1.274 or later**, with function hooks enabled
