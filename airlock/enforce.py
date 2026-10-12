@@ -486,12 +486,29 @@ def _handle(data, tool_name, mode="enforce"):
         eff = overrides.get(rule.id, rules_mod.default_action(rule))
         if eff == "off":
             continue
-        if rule.legacy:
-            denied = _run_legacy(data, tool_name, rule, eff, base, override_reason,
-                                 b_ms, session_id, mode, advice)
-        else:
-            denied = _run_rule(ctx, rule, match, eff, base, override_reason,
-                               b_ms, session_id, mode, advice, data)
+        # One rule failing (a malformed Jev answer reaching compute_margin, say)
+        # fails open for that rule only. Letting it escape to handle() used to
+        # skip every later rule, drop any advice already collected and leave
+        # no log row at all.
+        try:
+            if rule.legacy:
+                denied = _run_legacy(data, tool_name, rule, eff, base, override_reason,
+                                     b_ms, session_id, mode, advice)
+            else:
+                denied = _run_rule(ctx, rule, match, eff, base, override_reason,
+                                   b_ms, session_id, mode, advice, data)
+        except Exception as exc:
+            entry = dict(base)
+            entry.update({
+                "guard": rule.legacy or "rules",
+                "rule_id": rule.id,
+                "action": eff,
+                "error": ("%s: %s" % (type(exc).__name__, exc))[:300],
+                "fires": False,
+                "enforced": False,
+            })
+            log.append(entry)
+            continue
         if denied and mode == "enforce":
             return True
 
@@ -643,7 +660,9 @@ def _run_rule(ctx, rule, match, eff, base, override_reason, b_ms, session_id, mo
     # (airlock/rules.py, prefilter_browser_driving). R1 and R9 set it because
     # on a secret rule a second identical attempt does not un-wedge a session,
     # it prints the secret -- the human escape there is `user_requested`
-    # softening, which both keep. Every other rule keeps both ways, unchanged.
+    # softening, which both keep. R7-root-delete sets it because a recursive
+    # delete of / or the home directory must never pass on a stamp the model
+    # writes itself. Every other rule keeps both ways, unchanged.
     strict = bool(match.extra.get("strict"))
 
     if override_reason is not None:

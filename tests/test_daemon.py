@@ -13,6 +13,7 @@ import socket
 import stat
 import tempfile
 import threading
+import time
 import unittest
 
 from tests import posix_only
@@ -97,6 +98,27 @@ class TestConnectionPool(unittest.TestCase):
         self.assertFalse(reused)  # had to reconnect, so not a reuse
         self.assertTrue(dead_conn.closed)
 
+    def test_a_timeout_is_not_retried(self):
+        """A read timeout means the API is slow, not that the socket died.
+        Retrying doubles the wait past the hook's own socket timeout and
+        pays for the judgement twice. The slow connection is dropped so the
+        next request starts clean."""
+        slow_conn = _FakeConnection([
+            lambda: (_ for _ in ()).throw(TimeoutError("timed out")),
+        ])
+        made = []
+
+        def factory(timeout_s):
+            made.append(1)
+            return slow_conn
+
+        pool = daemon.ConnectionPool(size=1, connection_factory=factory)
+        with self.assertRaises(TimeoutError):
+            pool.request("/v1/systemone", b"{}", {}, 5)
+        self.assertEqual(len(made), 1)
+        self.assertTrue(slow_conn.closed)
+        self.assertIsNone(pool.slots[0].conn)
+
     def test_raises_if_retry_also_fails(self):
         dead_conn = _FakeConnection([
             lambda: (_ for _ in ()).throw(ConnectionResetError("gone")),
@@ -112,6 +134,90 @@ class TestConnectionPool(unittest.TestCase):
         pool = daemon.ConnectionPool(size=1, connection_factory=factory)
         with self.assertRaises(ConnectionResetError):
             pool.request("/v1/systemone", b"{}", {}, 5)
+
+    def test_timeout_is_not_retried(self):
+        # A read timeout means TypeSafe is slow, not that the connection died.
+        # The POST already went out, so a retry would bill it twice.
+        slow_conn = _FakeConnection([
+            lambda: (_ for _ in ()).throw(socket.timeout("timed out")),
+        ])
+        made = [slow_conn]
+
+        def factory(timeout_s):
+            return made.pop(0)
+
+        pool = daemon.ConnectionPool(size=1, connection_factory=factory)
+        with self.assertRaises(socket.timeout):
+            pool.request("/v1/systemone", b"{}", {}, 5)
+        self.assertEqual(slow_conn.requests, 1)
+        self.assertTrue(slow_conn.closed)
+        self.assertIsNone(pool.slots[0].conn)
+
+    def test_timeout_reply_is_flagged(self):
+        class _SlowPool:
+            def request(self, *a, **k):
+                raise socket.timeout("timed out")
+
+        with mock.patch.object(daemon, "_log"):
+            reply = daemon._handle_ask({"id": "x", "body": {}}, "k", _SlowPool(), daemon.Stats())
+        self.assertFalse(reply["ok"])
+        self.assertTrue(reply.get("timed_out"))
+
+    def test_busy_slot_does_not_block_a_free_one(self):
+        # The round-robin pick is busy; the other connection is idle and
+        # must be used rather than queueing behind the slow judgement.
+        conn_b = _FakeConnection([lambda: _FakeResponse(200, {})])
+        pool = daemon.ConnectionPool(size=2, connection_factory=lambda t: conn_b)
+        pool.slots[0].lock.acquire()
+        try:
+            status, _raw, _reused = pool.request("/v1/systemone", b"{}", {}, 5)
+        finally:
+            pool.slots[0].lock.release()
+        self.assertEqual(status, 200)
+        self.assertEqual(conn_b.requests, 1)
+
+    def test_waiting_for_a_slot_is_bounded_by_the_budget(self):
+        # Every slot busy: give up as a timeout within the caller's budget
+        # instead of sending the request after the client has gone direct.
+        made = []
+        pool = daemon.ConnectionPool(size=1, connection_factory=lambda t: made.append(t))
+        pool.slots[0].lock.acquire()
+        try:
+            start = time.monotonic()
+            with self.assertRaises(TimeoutError):
+                pool.request("/v1/systemone", b"{}", {}, 0.2)
+            self.assertLess(time.monotonic() - start, 2)
+        finally:
+            pool.slots[0].lock.release()
+        self.assertEqual(made, [])
+
+    def test_retry_uses_what_is_left_of_the_budget(self):
+        timeouts = []
+        dead_conn = _FakeConnection([
+            lambda: (_ for _ in ()).throw(ConnectionResetError("gone")),
+        ])
+        fresh_conn = _FakeConnection([lambda: _FakeResponse(200, {})])
+        connections = [dead_conn, fresh_conn]
+
+        def factory(timeout_s):
+            timeouts.append(timeout_s)
+            return connections.pop(0)
+
+        pool = daemon.ConnectionPool(size=1, connection_factory=factory)
+        with mock.patch.object(daemon.time, "monotonic", side_effect=[100.0, 100.0, 103.0]):
+            pool.request("/v1/systemone", b"{}", {}, 5)
+        self.assertEqual(timeouts, [5.0, 2.0])
+
+    def test_failed_retry_leaves_no_connection_behind(self):
+        connections = [
+            _FakeConnection([lambda: (_ for _ in ()).throw(ConnectionResetError("gone"))]),
+            _FakeConnection([lambda: (_ for _ in ()).throw(socket.timeout("slow"))]),
+        ]
+        pool = daemon.ConnectionPool(size=1, connection_factory=lambda t: connections.pop(0))
+        with self.assertRaises(socket.timeout):
+            pool.request("/v1/systemone", b"{}", {}, 5)
+        self.assertIsNone(pool.slots[0].conn)
+        self.assertFalse(pool.slots[0].lock.locked())
 
     def test_round_robins_across_pool_slots(self):
         conn_a = _FakeConnection([lambda: _FakeResponse(200, {})])

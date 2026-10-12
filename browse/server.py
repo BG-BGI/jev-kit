@@ -730,6 +730,24 @@ def text_model_env(env):
     return env
 
 
+def secrets_of(key):
+    """Every key the worker can hold: the TypeSafe key and, when one is
+    configured, the text model's. Either can surface in a worker traceback."""
+    out = [key]
+    try:
+        out.append(os.environ.get("TEXT_MODEL_API_KEY")
+                   or keyfile.get_env_value("TEXT_MODEL_API_KEY"))
+    except Exception:
+        pass
+    return [s for s in out if s]
+
+
+def scrub(text, secrets):
+    for secret in secrets:
+        text = text.replace(secret, "[REDACTED]")
+    return text
+
+
 def prewarm_wanted():
     """Whether to warm the whole chain at start-up instead of on first use.
 
@@ -858,7 +876,7 @@ class Browse:
             self.chromium.close()
             raise
         except BrowseError as exc:
-            raise BrowseError(str(exc).replace(key, "[REDACTED]"))
+            raise BrowseError(scrub(str(exc), secrets_of(key)))
         text, truncated = trim_text(result.get("text"))
         out = {
             "final_url": result.get("final_url"),
@@ -882,7 +900,7 @@ class Browse:
             out["plan"] = result["plan"]
         if result.get("timing"):
             out["timing"] = result["timing"]
-        return json.loads(json.dumps(out).replace(key, "[REDACTED]"))
+        return json.loads(scrub(json.dumps(out), secrets_of(key)))
 
     def shutdown(self):
         if self.daemon_used:
@@ -998,7 +1016,10 @@ class Server:
                 if not line.strip():
                     continue
                 for response in self.handle_line(line):
-                    stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+                    # ASCII escapes on the wire: a lone surrogate from a page,
+                    # or any non-ASCII text on a stdout that is not UTF-8
+                    # (cp1252 on Windows), raised here and ended the server.
+                    stdout.write(json.dumps(response) + "\n")
                     stdout.flush()
         except (KeyboardInterrupt, BrokenPipeError):
             pass

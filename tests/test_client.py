@@ -52,6 +52,14 @@ class TestClient(unittest.TestCase):
         self.assertEqual(result["answers"]["task_kind"]["choice"], "lookup")
         self.assertGreaterEqual(latency_ms, 0)
 
+    def test_non_object_json_is_a_typesafe_error(self):
+        """Valid JSON that is not an object (null, a list) is as unusable as
+        bad JSON; callers would otherwise hit AttributeError on .get()."""
+        for payload in (None, [1, 2], "x"):
+            with mock.patch("urllib.request.urlopen", return_value=_FakeResponse(payload)):
+                with self.assertRaises(client.TypeSafeError):
+                    client.call_jev("fake-key", {"x": 1}, {"q": {}}, timeout=5)
+
     def test_timeout_raises(self):
         with mock.patch("urllib.request.urlopen", side_effect=TimeoutError("timed out")):
             with self.assertRaises(TimeoutError):
@@ -86,6 +94,17 @@ class TestAskFallback(unittest.TestCase):
         call_jev.assert_called_once()
         self.assertEqual(result["model"], "jev-1.13.0")
         self.assertEqual(latency_ms, 900)
+
+    def test_no_api_key_raises_without_a_network_call(self):
+        with tempfile.TemporaryDirectory() as d:
+            missing_sock = os.path.join(d, "missing.sock")
+            with mock.patch.object(client, "_daemon_socket_path", return_value=missing_sock), \
+                 mock.patch.object(client, "call_jev") as call_jev, \
+                 mock.patch.object(client.keyfile, "get_api_key", return_value=None):
+                with self.assertRaises(client.TypeSafeError) as cm:
+                    client.ask({"state": {}, "model": client.MODEL, "questions": {}})
+        call_jev.assert_not_called()
+        self.assertIn("no API key", str(cm.exception))
 
     def test_falls_back_when_daemon_refuses_connection(self):
         with tempfile.TemporaryDirectory() as d:
@@ -140,6 +159,29 @@ class TestAskFallback(unittest.TestCase):
         call_jev.assert_not_called()
         self.assertEqual(latency_ms, 42)
         self.assertEqual(result["model"], "jev-1.13.0")
+
+    def test_daemon_timeout_raises_instead_of_resending(self):
+        # The daemon already spent the budget waiting on TypeSafe. Sending the
+        # same request again directly doubles the wait and the bill.
+        reply = {"id": "x", "ok": False, "error": "timed out", "timed_out": True}
+        with mock.patch.object(client.socket, "socket") as sock_cls, \
+             mock.patch.object(client, "call_jev") as call_jev:
+            sock = sock_cls.return_value
+            sock.makefile.return_value.readline.return_value = (json.dumps(reply) + "\n").encode()
+            with self.assertRaises(client.TypeSafeError):
+                client.ask({"state": {}, "model": client.MODEL, "questions": {}}, timeout_s=1.5)
+        call_jev.assert_not_called()
+
+    def test_daemon_read_timeout_raises_instead_of_resending(self):
+        # The daemon took the request and the client gave up waiting: the
+        # budget is spent and the request may be billed, so no direct call.
+        with mock.patch.object(client.socket, "socket") as sock_cls, \
+             mock.patch.object(client, "call_jev") as call_jev:
+            sock = sock_cls.return_value
+            sock.makefile.return_value.readline.side_effect = socket.timeout("timed out")
+            with self.assertRaises(client.TypeSafeError):
+                client.ask({"state": {}, "model": client.MODEL, "questions": {}}, timeout_s=1.5)
+        call_jev.assert_not_called()
 
     def test_never_puts_key_on_a_command_line_in_ask_or_daemon_path(self):
         import inspect
