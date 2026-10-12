@@ -36,10 +36,11 @@ test('fmt compacts large numbers', () => {
   expect(fmt(10700000)).toBe('10.7M')
 })
 
-test('buildModelSql groups trimmed rows by model and quotes the session id', () => {
+test('buildModelSql credits later requests by model and quotes the session id', () => {
   const sql = buildModelSql("s'1", boundaries(new Date('2026-10-07T15:30:00')))
   expect(sql.includes("session_id='s''1'")).toBe(true)
   expect(sql.includes("outcome='trimmed'")).toBe(true)
+  expect(sql.includes('JOIN compaction_req')).toBe(true)
   expect(sql.includes('GROUP BY 1')).toBe(true)
   for (const p of ['session', 'day', 'week', 'month']) {
     expect(sql.includes(`eff_${p}`)).toBe(true)
@@ -47,7 +48,7 @@ test('buildModelSql groups trimmed rows by model and quotes the session id', () 
 })
 
 test('parseModelRows reads per-period columns and tolerates junk', () => {
-  const m = parseModelRows([{ model: 'claude-sonnet-5-5', eff_day: 40, saved_day: 4, eff_month: '90' }])
+  const m = parseModelRows([{ model: 'claude-sonnet-5-5', eff_day: 40, eff_month: '90' }])
   expect(m[0].model).toBe('claude-sonnet-5-5')
   expect(m[0].eff.day).toBe(40)
   expect(m[0].eff.month).toBe(90)

@@ -42,24 +42,28 @@ export function buildSql(sessionId: string, b: Bounds): string {
   )
 }
 
-/** Trimmed-token savings per model, one row per model, one column per period.
- *  Rows from before the model column existed group under 'unknown'. */
+/** Total saved per model: each trim's tokens times the later requests that ran
+ *  on each model, so a /model switch splits the credit. Trims scraped before
+ *  compaction_req existed have no rows there until the next scrape. */
 export function buildModelSql(sessionId: string, b: Bounds): string {
   const sid = sessionId.replace(/'/g, "''")
   const since = [b.day, b.week, b.month].sort()[0]
-  const cols = (expr: string, name: string) =>
-    ([
-      ['session', `session_id='${sid}'`],
-      ['day', `ts>='${b.day}'`],
-      ['week', `ts>='${b.week}'`],
-      ['month', `ts>='${b.month}'`],
-    ] as Array<[Period, string]>)
-      .map(([p, w]) => `COALESCE(SUM(CASE WHEN ${w} THEN ${expr} ELSE 0 END),0)/4 AS ${name}_${p}`)
-      .join(', ')
-  return `SELECT COALESCE(model,'unknown') AS model,
- ${cols('chars_before-chars_after', 'saved')},
- ${cols('(chars_before-chars_after)*COALESCE(requests_after,0)', 'eff')}
-FROM compaction WHERE outcome='trimmed' AND (ts>='${since}' OR session_id='${sid}')
+  const cols = (
+    [
+      ['session', `c.session_id='${sid}'`],
+      ['day', `c.ts>='${b.day}'`],
+      ['week', `c.ts>='${b.week}'`],
+      ['month', `c.ts>='${b.month}'`],
+    ] as Array<[Period, string]>
+  )
+    .map(
+      ([p, w]) =>
+        `COALESCE(SUM(CASE WHEN ${w} THEN (c.chars_before-c.chars_after)*r.requests ELSE 0 END),0)/4 AS eff_${p}`,
+    )
+    .join(', ')
+  return `SELECT r.model AS model, ${cols}
+FROM compaction c JOIN compaction_req r ON r.row_hash=c.row_hash
+WHERE c.outcome='trimmed' AND (c.ts>='${since}' OR c.session_id='${sid}')
 GROUP BY 1 ORDER BY eff_month DESC;`
 }
 
@@ -70,7 +74,7 @@ export function parseModelRows(rows: unknown): ModelStats[] {
     const r = row as Record<string, unknown>
     const pick = (k: string) =>
       Object.fromEntries(P.map(p => [p, Number(r[`${k}_${p}`]) || 0])) as Record<Period, number>
-    return { model: String(r.model ?? 'unknown'), saved: pick('saved'), eff: pick('eff') }
+    return { model: String(r.model ?? 'unknown'), eff: pick('eff') }
   })
 }
 

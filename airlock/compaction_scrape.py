@@ -66,6 +66,12 @@ CREATE TABLE IF NOT EXISTS compaction (
   row_hash TEXT NOT NULL UNIQUE
 );
 CREATE INDEX IF NOT EXISTS compaction_ts ON compaction(ts);
+CREATE TABLE IF NOT EXISTS compaction_req (
+  row_hash TEXT NOT NULL,
+  model TEXT NOT NULL,
+  requests INTEGER NOT NULL,
+  PRIMARY KEY (row_hash, model)
+);
 """
 
 _COLS = ("ts", "project", "session_id", "cwd", "mode", "tool", "outcome", "chars_before", "chars_after",
@@ -143,6 +149,28 @@ def _models(lines):
     return sorted(out)
 
 
+def _request_models(lines):
+    """Sorted (timestamp, model) of each distinct assistant requestId, first seen.
+    A request with no real model counts as 'unknown'."""
+    seen = {}
+    for line in lines:
+        if "assistant" not in line or not _ASST.search(line):
+            continue
+        rid, ts = _REQID.search(line), _TS.search(line)
+        if rid and ts and rid.group(1) not in seen:
+            m = _MODEL.search(line)
+            seen[rid.group(1)] = (ts.group(1), m.group(1) if m else "unknown")
+    return sorted(seen.values())
+
+
+def _later_by_model(reqs, ts):
+    """{model: count} of the requests made after ts: the ones that ran on the trimmed context."""
+    out = {}
+    for t, m in reqs[bisect.bisect_right(reqs, (ts, "\U0010ffff")):]:
+        out[m] = out.get(m, 0) + 1
+    return out
+
+
 def _model_at(models, ts):
     """The model of the last request at or before ts, else the first after it."""
     if not models:
@@ -167,6 +195,7 @@ def scrape(projects_dir=None, conn=None):
                     continue
                 req_ts = _request_times(lines)
                 models = _models(lines)
+                reqs = _request_models(lines)
                 for line in lines:
                     if PREFIX not in line:
                         continue
@@ -196,6 +225,11 @@ def scrape(projects_dir=None, conn=None):
                                  (after, full["row_hash"], after))
                     conn.execute("UPDATE compaction SET model = ? WHERE row_hash = ? AND model IS NULL",
                                  (full["model"], full["row_hash"]))
+                    # Credit the trim to the model of each later request, so a /model switch splits it.
+                    for m, n in _later_by_model(reqs, ts).items():
+                        conn.execute("INSERT INTO compaction_req (row_hash, model, requests) VALUES (?, ?, ?)"
+                                     " ON CONFLICT(row_hash, model) DO UPDATE SET requests = MAX(requests, excluded.requests)",
+                                     (full["row_hash"], m, n))
     finally:
         if own:
             conn.close()
