@@ -2,15 +2,38 @@ import { atom, read, update } from 'claude-code'
 import type { Register, EngineInterface } from 'claude-code'
 
 import type { PeriodStats, Stats } from '../types'
-import { boundaries, buildModelSql, buildSql, fmt, pad, parseModelRows, parseRows, shortModel } from './lib'
+import {
+  boundaries,
+  buildModelSql,
+  buildSql,
+  fmt,
+  fmtUsd,
+  JEV_RATES,
+  pad,
+  parseModelRows,
+  parseRates,
+  parseRows,
+  shortModel,
+} from './lib'
 
 const PANE = 'jev-stats'
 const DB_SH = 'exec sqlite3 -json "$HOME/.local/state/airlock/metrics.db"'
 const SCRAPE_SH =
   'cd "$HOME/.local/share/airlock/current" && exec python3 -m airlock.metrics scrape-compaction'
 
+const RATES_SH =
+  'cd "$HOME/.local/share/airlock/current" && exec python3 -m airlock.pricing jev-rates'
+
 const stats = atom({ plugin: 'jev-stats', key: 'stats' } as const, null)
 const sessionId = atom({ plugin: 'jev-stats', key: 'sessionId' } as const, '')
+const rates = atom({ plugin: 'jev-stats', key: 'rates' } as const, JEV_RATES)
+
+/** Jev's gateway rate, from airlock's pricing cache. Keeps the last good one. */
+async function refreshRates($: EngineInterface): Promise<void> {
+  const ran = await $.process.run(['sh', '-c', RATES_SH], { timeoutMs: 10000 }).catch(() => null)
+  const next = ran && ran.exitCode === 0 ? parseRates(ran.stdout) : null
+  if (next) await update($, rates, () => next)
+}
 
 async function refresh($: EngineInterface): Promise<void> {
   const sid = await read($, sessionId)
@@ -24,7 +47,7 @@ async function refresh($: EngineInterface): Promise<void> {
       return undefined
     }
   }
-  const rows = await query(buildSql(sid, b))
+  const rows = await query(buildSql(sid, b, await read($, rates)))
   if (rows === undefined) return
   // The model table is optional: an old db without the column just shows none.
   const modelRows = await query(buildModelSql(sid, b))
@@ -42,7 +65,8 @@ export const register: Register = on => {
       name: 'jev-stats',
       description: 'Show live jev-kit metrics for this session, today, this week and this month',
     })
-    void refresh($)
+    void refreshRates($).then(() => refresh($))
+    $.clock.every(3600000, () => refreshRates($))
     $.clock.every(5000, () => refresh($))
     // Compaction rows come from transcript scrapes; keep them fresh too.
     $.clock.every(180000, () =>
@@ -87,7 +111,7 @@ export const register: Register = on => {
         <Text>{line('denies', p => fmt(p.denied))}</Text>
         <Text>{line('jev calls', p => fmt(p.jev))}</Text>
         <Text>{line('jev tokens', p => fmt(p.tok))}</Text>
-        <Text>{line('jev cost', p => '$' + p.cost.toFixed(3))}</Text>
+        <Text>{line('jev cost', p => fmtUsd(p.cost))}</Text>
         <Text>{line('trim saved', p => fmt(p.saved))}</Text>
         <Text>{line('total saved', p => fmt(p.eff))}</Text>
         {s.models.length > 0 && (

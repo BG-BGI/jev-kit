@@ -20,6 +20,6 @@ export type Stats = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'jev-stats': { stats: Stats | null; sessionId: string }
+    'jev-stats': { stats: Stats | null; sessionId: string; rates: { input: number; output: number } }
   }
 }

@@ -37,6 +37,8 @@ ATTEMPT_NAME = "gateway-pricing.attempt"
 REFRESH_AFTER_S = 24 * 3600
 RETRY_AFTER_S = 3600
 FETCH_TIMEOUT_S = 15
+JEV_ID = "typesafe-ai/jev"
+JEV_DEFAULT_RATES = (4.2e-8, 0.0)
 
 # anthropic/claude-sonnet-4.5, anthropic/claude-opus-5.5, claude-fable-5.1 ...
 # Version-first ids (claude-3-haiku) and "-fast" variants do not match.
@@ -99,6 +101,28 @@ def extract(models):
     return {alias: row for alias, (_, row) in best.items()}
 
 
+def extract_jev(models):
+    """{"input", "output"} USD per token for the TypeSafe Jev model, or None
+    when the gateway list has no usable row for it."""
+    for m in models if isinstance(models, list) else []:
+        if isinstance(m, dict) and m.get("id") == JEV_ID and isinstance(m.get("pricing"), dict):
+            rin, rout = _rate(m["pricing"].get("input")), _rate(m["pricing"].get("output"))
+            if rin is not None and rout is not None:
+                return {"input": rin, "output": rout}
+    return None
+
+
+def jev_rates(cache=None):
+    """(input, output) USD per token for a Jev call: the cached gateway row,
+    else the published rate (input only, output free)."""
+    row = ((cache if cache is not None else load()) or {}).get("jev")
+    if isinstance(row, dict):
+        rin, rout = _rate(row.get("input")), _rate(row.get("output"))
+        if rin is not None and rout is not None:
+            return rin, rout
+    return JEV_DEFAULT_RATES
+
+
 def load(path=None):
     """The cache as {"fetched_at": float, "aliases": {...}}, or None when it
     is missing or malformed. Never raises."""
@@ -131,9 +155,11 @@ def refresh(path=None, url=URL, now=None):
         if not aliases:
             _log_event("refresh_failed", error="no claude prices in gateway list")
             return None
-        _write_atomic(path or _cache_path(), json.dumps(
-            {"fetched_at": time.time() if now is None else now, "source": url, "aliases": aliases},
-            indent=2, sort_keys=True))
+        doc = {"fetched_at": time.time() if now is None else now, "source": url, "aliases": aliases}
+        jev = extract_jev(body.get("data"))
+        if jev:
+            doc["jev"] = jev
+        _write_atomic(path or _cache_path(), json.dumps(doc, indent=2, sort_keys=True))
         _log_event("refresh", families=len(aliases))
         return aliases
     except Exception as exc:
@@ -210,6 +236,9 @@ def _main(argv):
         aliases = refresh()
         print("refreshed %d families" % len(aliases) if aliases else "refresh failed; cache unchanged")
         return 0 if aliases else 1
+    if cmd == "jev-rates":
+        print("%.12g %.12g" % jev_rates())
+        return 0
     if cmd == "show":
         cache = load()
         if not cache:
@@ -224,7 +253,7 @@ def _main(argv):
                 "-" if cr is None else "$%.2f/M" % (cr * 1e6),
                 "-" if cw is None else "$%.2f/M" % (cw * 1e6)))
         return 0
-    print("usage: python3 -m airlock.pricing [refresh|show]")
+    print("usage: python3 -m airlock.pricing [refresh|show|jev-rates]")
     return 2
 
 

@@ -35,6 +35,29 @@ def _agent(model="", subagent_type="general-purpose"):
     return {"tool_input": {"subagent_type": subagent_type, "model": model, "description": "d", "prompt": "p"}}
 
 
+class TestJevRates(unittest.TestCase):
+    def test_extract_jev_reads_the_typesafe_row(self):
+        rows = GATEWAY + [{"id": "typesafe-ai/jev", "pricing": {"input": "0.000000042", "output": "0"}}]
+        self.assertEqual(pricing.extract_jev(rows), {"input": 4.2e-8, "output": 0.0})
+        self.assertIsNone(pricing.extract_jev(GATEWAY))
+        self.assertIsNone(pricing.extract_jev([{"id": "typesafe-ai/jev", "pricing": {"input": "x"}}]))
+        self.assertIsNone(pricing.extract_jev(None))
+
+    def test_jev_rates_prefer_the_cache_and_default_to_the_published_rate(self):
+        self.assertEqual(pricing.jev_rates({"jev": {"input": 1e-7, "output": 2e-7}}), (1e-7, 2e-7))
+        self.assertEqual(pricing.jev_rates({}), pricing.JEV_DEFAULT_RATES)
+        self.assertEqual(pricing.jev_rates({"jev": {"input": "bad"}}), pricing.JEV_DEFAULT_RATES)
+
+    def test_refresh_stores_the_jev_row(self):
+        body = {"data": GATEWAY + [{"id": "typesafe-ai/jev", "pricing": {"input": "0.000000042", "output": "0"}}]}
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "p.json")
+            with mock.patch.object(pricing.urllib.request, "urlopen") as op:
+                op.return_value.__enter__.return_value = io.BytesIO(json.dumps(body).encode())
+                self.assertTrue(pricing.refresh(path=path, now=1))
+            self.assertEqual(pricing.jev_rates(pricing.load(path)), (4.2e-8, 0.0))
+
+
 class TestExtract(unittest.TestCase):
     def test_newest_non_fast_row_per_family(self):
         a = pricing.extract(GATEWAY)
