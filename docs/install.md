@@ -51,6 +51,8 @@ or `--all`.
 release, so it works from any directory.
 
 ```bash
+jev-kit install --profile owner   # dry run of install/install.sh; add --yes to apply
+jev-kit install --yes --profile owner -- --guard --wire ~/.claude/settings.json
 jev-kit status                      # release, mode, wiring, plugins, compaction
 jev-kit config list                 # every setting and where its value comes from
 jev-kit config set mode enforce     # dry run: prints the diff, writes nothing
@@ -72,6 +74,9 @@ Compaction sends tool output off the machine, so `compaction install` prints
 what leaves and does nothing without `--yes`. A mode change is one `set`, with
 no reinstall. `compaction set` refuses the API key option; the key stays in the
 key file.
+
+`install` runs `install/install.sh`, so anything after `--` is an installer flag. It
+records the profile and the checkout path, and it never turns compaction on.
 
 `update` fetches `origin` only, refuses a dirty checkout or a branch other than
 `main`, and runs `install/install.sh --guard`, which runs the tests before it

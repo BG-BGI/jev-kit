@@ -80,6 +80,12 @@ def build_parser():
     for sp in (cs, cu, ci, cosub.choices["update"], cr):
         sp.add_argument("--yes", action="store_true", help="apply (default is a dry run)")
 
+    ins = sub.add_parser("install", help="run install/install.sh (dry run unless --yes); extra flags pass through")
+    ins.add_argument("--repo", help="path to the jev-kit checkout (default: recorded, then cwd)")
+    ins.add_argument("--profile", choices=("owner", "shared"), help="record whether this machine is yours or shared")
+    ins.add_argument("--yes", action="store_true", help="apply (default is a dry run)")
+    ins.add_argument("installer_args", nargs=argparse.REMAINDER, help="after --: flags for install.sh, e.g. --guard --wire FILE")
+
     for name in PASSTHROUGH:
         sub.add_parser(name, help="run python3 -m airlock.%s from anywhere" % name, add_help=False)
     return p
@@ -106,6 +112,9 @@ def main(argv=None, out=None, err=None):
     if args.cmd == "plugins":
         from . import plugins
         return plugins.run(args, out, err)
+    if args.cmd == "install":
+        from . import install
+        return install.run(args, out, err)
     if args.cmd == "profile":
         from . import profile
         return profile.run(args, out, err)
