@@ -116,6 +116,11 @@ echo shadow  > ~/.config/airlock/mode     # back to log-only
 Kill switch, which beats the mode entirely: `export AIRLOCK_DISABLE=1` for this
 shell, or `touch ~/.config/airlock/disabled` for the machine.
 
+Once it is installed, `jev-kit` runs from any directory. `jev-kit status` shows
+the whole install, `jev-kit config set mode enforce --yes` changes the mode,
+and `jev-kit update --yes` pulls, tests, deploys and updates the plugins. Every
+command that writes shows a diff first and does nothing without `--yes`.
+
 > ### Or tell your agent
 >
 > Paste this into Claude Code:
