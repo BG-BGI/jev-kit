@@ -1,4 +1,4 @@
-import type { ModelStats, Period, PeriodStats, Stats } from '../types'
+import type { DailyRates, ModelStats, Period, PeriodStats, Stats } from '../types'
 
 /** USD per token for a Jev call, input and output. */
 export type Rates = { input: number; output: number }
@@ -8,7 +8,40 @@ export const JEV_RATES: Rates = { input: 4.2e-8, output: 0 }
 /** `jev-rates` prints "<input> <output>"; anything else keeps the default. */
 export function parseRates(out: string): Rates | null {
   const [i, o] = out.trim().split(/\s+/).map(Number)
-  return Number.isFinite(i) && Number.isFinite(o) && i >= 0 && o >= 0 ? { input: i, output: o } : null
+  return i !== undefined && o !== undefined && Number.isFinite(i) && Number.isFinite(o) && i >= 0 && o >= 0
+    ? { input: i, output: o }
+    : null
+}
+
+/** `jev-rates-history` prints one "<day> <input> <output>" line per day.
+ *  Malformed lines are dropped; the result is sorted oldest first. */
+export function parseRatesHistory(out: string): DailyRates[] {
+  const rows: DailyRates[] = []
+  for (const line of out.split('\n')) {
+    const m = line.trim().match(/^(\d{4}-\d{2}-\d{2})\s+(\S+)\s+(\S+)$/)
+    if (!m || m[1] === undefined) continue
+    const input = Number(m[2])
+    const output = Number(m[3])
+    if (Number.isFinite(input) && Number.isFinite(output) && input >= 0 && output >= 0)
+      rows.push({ day: m[1], input, output })
+  }
+  return rows.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0))
+}
+
+/** The per-token rate as SQL: a CASE over the history's days, newest branch
+ *  first, so each event is costed at the rate of its own UTC day. Events
+ *  older than the history get the oldest known rate; no history at all means
+ *  the flat current rate. The day strings come from parseRatesHistory's
+ *  regex, so they are SQL-safe. */
+function rateExpr(pick: 'input' | 'output', rates: Rates, history: DailyRates[]): string {
+  const oldest = history[0]
+  if (oldest === undefined) return String(rates[pick])
+  const cases = [...history]
+    .reverse()
+    .slice(0, -1)
+    .map(r => `WHEN substr(ts,1,10)>='${r.day}' THEN ${r[pick]}`)
+    .join(' ')
+  return cases ? `(CASE ${cases} ELSE ${oldest[pick]} END)` : String(oldest[pick])
 }
 
 export function fmtUsd(n: number): string {
@@ -33,8 +66,15 @@ export function boundaries(now: Date): Bounds {
 
 /** One statement, one row per period, uniform columns, so `sqlite3 -json`
  *  answers a single JSON array. */
-export function buildSql(sessionId: string, b: Bounds, rates: Rates = JEV_RATES): string {
+export function buildSql(
+  sessionId: string,
+  b: Bounds,
+  rates: Rates = JEV_RATES,
+  history: DailyRates[] = [],
+): string {
   const sid = sessionId.replace(/'/g, "''")
+  const rin = rateExpr('input', rates, history)
+  const rout = rateExpr('output', rates, history)
   const periods: Array<[Period, string]> = [
     ['session', `session_id='${sid}'`],
     ['day', `ts>='${b.day}'`],
@@ -48,7 +88,7 @@ export function buildSql(sessionId: string, b: Bounds, rates: Rates = JEV_RATES)
  (SELECT COUNT(*) FROM events WHERE ${w}) AS n,
  (SELECT COALESCE(SUM(denied),0) FROM events WHERE ${w}) AS denied,
  (SELECT COALESCE(SUM(jev_called),0) FROM events WHERE ${w}) AS jev,
- (SELECT COALESCE(SUM(COALESCE(cost_usd, COALESCE(input_tokens,0)*${rates.input}+COALESCE(output_tokens,0)*${rates.output})),0.0) FROM events WHERE ${w}) AS cost,
+ (SELECT COALESCE(SUM(COALESCE(cost_usd, COALESCE(input_tokens,0)*${rin}+COALESCE(output_tokens,0)*${rout})),0.0) FROM events WHERE ${w}) AS cost,
  (SELECT COALESCE(SUM(COALESCE(input_tokens,0)+COALESCE(output_tokens,0)),0) FROM events WHERE ${w}) AS tok,
  (SELECT COALESCE(SUM(chars_before-chars_after),0)/4 FROM compaction WHERE outcome='trimmed' AND ${w}) AS saved,
  (SELECT COALESCE(SUM((chars_before-chars_after)*COALESCE(requests_after,0)),0)/4 FROM compaction WHERE outcome='trimmed' AND ${w}) AS eff`,
