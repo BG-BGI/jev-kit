@@ -12,6 +12,9 @@ export type PeriodStats = {
 
 export type ModelStats = { model: string; eff: Record<Period, number> }
 
+/** Jev's USD-per-token rates as of one UTC day, from the pricing history. */
+export type DailyRates = { day: string; input: number; output: number }
+
 export type Stats = {
   periods: Record<Period, PeriodStats>
   models: ModelStats[]
@@ -20,6 +23,11 @@ export type Stats = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'jev-stats': { stats: Stats | null; sessionId: string; rates: { input: number; output: number } }
+    'jev-stats': {
+      stats: Stats | null
+      sessionId: string
+      rates: { input: number; output: number }
+      ratesHistory: DailyRates[]
+    }
   }
 }

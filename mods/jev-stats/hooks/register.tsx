@@ -12,6 +12,7 @@ import {
   pad,
   parseModelRows,
   parseRates,
+  parseRatesHistory,
   parseRows,
   shortModel,
 } from './lib'
@@ -23,16 +24,26 @@ const SCRAPE_SH =
 
 const RATES_SH =
   'cd "$HOME/.local/share/airlock/current" && exec python3 -m airlock.pricing jev-rates'
+const RATES_HISTORY_SH =
+  'cd "$HOME/.local/share/airlock/current" && exec python3 -m airlock.pricing jev-rates-history'
 
 const stats = atom({ plugin: 'jev-stats', key: 'stats' } as const, null)
 const sessionId = atom({ plugin: 'jev-stats', key: 'sessionId' } as const, '')
 const rates = atom({ plugin: 'jev-stats', key: 'rates' } as const, JEV_RATES)
+const ratesHistory = atom({ plugin: 'jev-stats', key: 'ratesHistory' } as const, [])
 
-/** Jev's gateway rate, from airlock's pricing cache. Keeps the last good one. */
+/** Jev's gateway rate and its daily history, from airlock's pricing cache.
+ *  Keeps the last good values; the history prices each past day's events at
+ *  that day's rate. */
 async function refreshRates($: EngineInterface): Promise<void> {
   const ran = await $.process.run(['sh', '-c', RATES_SH], { timeoutMs: 10000 }).catch(() => null)
   const next = ran && ran.exitCode === 0 ? parseRates(ran.stdout) : null
   if (next) await update($, rates, () => next)
+  const hist = await $.process
+    .run(['sh', '-c', RATES_HISTORY_SH], { timeoutMs: 10000 })
+    .catch(() => null)
+  const days = hist && hist.exitCode === 0 ? parseRatesHistory(hist.stdout) : []
+  if (days.length > 0) await update($, ratesHistory, () => days)
 }
 
 async function refresh($: EngineInterface): Promise<void> {
@@ -47,7 +58,7 @@ async function refresh($: EngineInterface): Promise<void> {
       return undefined
     }
   }
-  const rows = await query(buildSql(sid, b, await read($, rates)))
+  const rows = await query(buildSql(sid, b, await read($, rates), await read($, ratesHistory)))
   if (rows === undefined) return
   // The model table is optional: an old db without the column just shows none.
   const modelRows = await query(buildModelSql(sid, b))
