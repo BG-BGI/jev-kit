@@ -37,6 +37,7 @@ _SKIP = re.compile(r"^auto-compact skipped \((?P<err>.*)\)$")
 _ASST = re.compile(r'"type"\s*:\s*"assistant"')
 _REQID = re.compile(r'"requestId"\s*:\s*"([^"]+)"')
 _TS = re.compile(r'"timestamp"\s*:\s*"([^"]+)"')
+_MODEL = re.compile(r'"model"\s*:\s*"([^"<]+)"')
 
 TABLE = """
 CREATE TABLE IF NOT EXISTS compaction (
@@ -60,6 +61,7 @@ CREATE TABLE IF NOT EXISTS compaction (
   state_tokens INTEGER,
   requests INTEGER,
   requests_after INTEGER,
+  model TEXT,
   detail TEXT,
   row_hash TEXT NOT NULL UNIQUE
 );
@@ -68,16 +70,17 @@ CREATE INDEX IF NOT EXISTS compaction_ts ON compaction(ts);
 
 _COLS = ("ts", "project", "session_id", "cwd", "mode", "tool", "outcome", "chars_before", "chars_after",
          "chunks", "chunks_omitted", "msgs_kept", "msgs_total", "reduction_pct", "call_dropped", "pinned",
-         "state_tokens", "requests", "requests_after", "detail", "row_hash")
+         "state_tokens", "requests", "requests_after", "model", "detail", "row_hash")
 
 
 def ensure_schema(conn):
-    """Create the table, and add requests_after to a database from before it."""
+    """Create the table, and add the later columns to a database from before them."""
     conn.executescript(TABLE)
-    try:
-        conn.execute("ALTER TABLE compaction ADD COLUMN requests_after INTEGER")
-    except sqlite3.OperationalError:
-        pass
+    for col in ("requests_after INTEGER", "model TEXT"):
+        try:
+            conn.execute("ALTER TABLE compaction ADD COLUMN " + col)
+        except sqlite3.OperationalError:
+            pass
 
 
 def _num(pattern, text):
@@ -128,6 +131,26 @@ def _request_times(lines):
     return sorted(seen.values())
 
 
+def _models(lines):
+    """Sorted (timestamp, model) of each assistant record that names a model."""
+    out = []
+    for line in lines:
+        if "assistant" not in line or not _ASST.search(line):
+            continue
+        ts, m = _TS.search(line), _MODEL.search(line)
+        if ts and m:
+            out.append((ts.group(1), m.group(1)))
+    return sorted(out)
+
+
+def _model_at(models, ts):
+    """The model of the last request at or before ts, else the first after it."""
+    if not models:
+        return None
+    i = bisect.bisect_right(models, (ts, "\U0010ffff"))
+    return models[i - 1 if i else 0][1]
+
+
 def scrape(projects_dir=None, conn=None):
     """Returns (events_seen, rows_added)."""
     root = Path(projects_dir) if projects_dir else Path.home() / ".claude" / "projects"
@@ -143,6 +166,7 @@ def scrape(projects_dir=None, conn=None):
                 except OSError:
                     continue
                 req_ts = _request_times(lines)
+                models = _models(lines)
                 for line in lines:
                     if PREFIX not in line:
                         continue
@@ -161,7 +185,7 @@ def scrape(projects_dir=None, conn=None):
                     after = len(req_ts) - bisect.bisect_right(req_ts, ts)
                     full = dict.fromkeys(_COLS)
                     full.update(row, ts=ts, project=f.parent.name, session_id=rec.get("sessionId"),
-                                cwd=rec.get("cwd"), requests_after=after,
+                                cwd=rec.get("cwd"), requests_after=after, model=_model_at(models, ts),
                                 row_hash=hashlib.sha256((ts + "\n" + content).encode("utf-8")).hexdigest())
                     added += conn.execute(
                         "INSERT OR IGNORE INTO compaction (%s) VALUES (%s)" % (",".join(_COLS), ",".join("?" * len(_COLS))),
@@ -170,6 +194,8 @@ def scrape(projects_dir=None, conn=None):
                     conn.execute("UPDATE compaction SET requests_after = ? WHERE row_hash = ?"
                                  " AND (requests_after IS NULL OR requests_after < ?)",
                                  (after, full["row_hash"], after))
+                    conn.execute("UPDATE compaction SET model = ? WHERE row_hash = ? AND model IS NULL",
+                                 (full["model"], full["row_hash"]))
     finally:
         if own:
             conn.close()

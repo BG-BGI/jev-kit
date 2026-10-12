@@ -17,9 +17,11 @@ def sysrec(text, ts="2026-10-07T15:00:00.000Z"):
             "timestamp": ts, "sessionId": "s1", "cwd": "/w"}
 
 
-def asstrec(req_id, ts):
-    return {"type": "assistant", "requestId": req_id, "timestamp": ts, "sessionId": "s1",
-            "message": {"role": "assistant", "content": []}}
+def asstrec(req_id, ts, model=None):
+    msg = {"role": "assistant", "content": []}
+    if model:
+        msg["model"] = model
+    return {"type": "assistant", "requestId": req_id, "timestamp": ts, "sessionId": "s1", "message": msg}
 
 
 class TestParse(unittest.TestCase):
@@ -116,6 +118,33 @@ class TestScrape(unittest.TestCase):
         # 500 chars saved * 2 later requests / 4 chars per token
         self.assertIn("effective ~250 tok", out.getvalue())
 
+    def test_model_is_the_last_request_at_or_before_the_trim(self):
+        ev = sysrec("Bash output 50% smaller (1000 -> 500 chars); 1/2 chunks omitted",
+                    ts="2026-10-07T15:00:00.000Z")
+        self.write("a/1.jsonl", [
+            asstrec("req_1", "2026-10-07T14:58:00.000Z", "claude-opus-5-5"),
+            asstrec("req_2", "2026-10-07T14:59:00.000Z", "claude-sonnet-5-5"),
+            asstrec("req_s", "2026-10-07T14:59:30.000Z", "<synthetic>"),   # not a real model
+            ev,
+            asstrec("req_3", "2026-10-07T15:01:00.000Z", "claude-haiku-5-5"),
+        ])
+        cs.scrape(self.proj)
+        c = sqlite3.connect(str(metrics.db_path()))
+        self.assertEqual(c.execute("SELECT model FROM compaction").fetchall(), [("claude-sonnet-5-5",)])
+        c.close()
+
+    def test_model_falls_back_to_first_later_request_and_backfills(self):
+        ev = sysrec("Bash output 50% smaller (1000 -> 500 chars); 1/2 chunks omitted",
+                    ts="2026-10-07T15:00:00.000Z")
+        self.write("a/1.jsonl", [ev])
+        cs.scrape(self.proj)
+        c = sqlite3.connect(str(metrics.db_path()))
+        self.assertEqual(c.execute("SELECT model FROM compaction").fetchall(), [(None,)])
+        self.write("a/1.jsonl", [ev, asstrec("req_1", "2026-10-07T15:01:00.000Z", "claude-haiku-5-5")])
+        cs.scrape(self.proj)
+        self.assertEqual(c.execute("SELECT model FROM compaction").fetchall(), [("claude-haiku-5-5",)])
+        c.close()
+
     def test_ensure_schema_migrates_old_table(self):
         conn = sqlite3.connect(str(metrics.db_path()))
         conn.execute("CREATE TABLE compaction (id INTEGER PRIMARY KEY, ts TEXT NOT NULL,"
@@ -124,6 +153,7 @@ class TestScrape(unittest.TestCase):
         cs.ensure_schema(conn)  # idempotent
         cols = [r[1] for r in conn.execute("PRAGMA table_info(compaction)")]
         self.assertIn("requests_after", cols)
+        self.assertIn("model", cols)
         conn.close()
 
 
