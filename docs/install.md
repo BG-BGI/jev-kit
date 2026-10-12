@@ -45,6 +45,26 @@ Components are flags: `--guard --daemon --tuning --monitoring --filesearch
 or `--all`.
 `--check-only` prints the plan and installs nothing.
 
+## The `jev-kit` command
+
+`install/install.sh --guard` links `~/.local/bin/jev-kit` to the deployed
+release, so it works from any directory.
+
+```bash
+jev-kit status                      # release, mode, wiring, plugins, compaction
+jev-kit config list                 # every setting and where its value comes from
+jev-kit config set mode enforce     # dry run: prints the diff, writes nothing
+jev-kit config set mode enforce --yes
+jev-kit config set r6 on --yes      # R6 (GUI/browser) on a headless machine
+jev-kit rollback --yes              # point `current` at the previous release
+jev-kit metrics report              # same as python3 -m airlock.metrics report
+```
+
+Every command that writes shows a diff first, backs the file up with a
+timestamp, and needs `--yes`. A machine marked `shared` in
+`~/.config/jev-kit/profile.json` refuses `config set mode enforce` unless you
+add `--i-own-this-machine`.
+
 The **session check** rides with the guard and is on by default on every
 platform (`--no-session-check` leaves it out). It is a `SessionStart` hook
 that reads local state and tells you, at the moment you start a session, when

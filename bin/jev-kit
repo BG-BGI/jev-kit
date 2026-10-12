@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# jev-kit front door. Runs the Python CLI from the deployed release so it works
+# from any directory. install/install.sh links this into ~/.local/bin.
+set -euo pipefail
+AIRLOCK_HOME="${AIRLOCK_HOME:-$HOME/.local/share/airlock}"
+if [ ! -d "$AIRLOCK_HOME/current/jevkit" ]; then
+  echo "jev-kit: no deployed release under $AIRLOCK_HOME (run install/install.sh --guard in the repo)" >&2
+  exit 1
+fi
+PYTHONPATH="$AIRLOCK_HOME/current${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m jevkit "$@"
