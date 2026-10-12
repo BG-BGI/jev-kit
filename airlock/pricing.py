@@ -18,8 +18,15 @@ the cache and, when that is older than REFRESH_AFTER_S, spawns a detached
 network is not retried on every tool call. No cache at all means no price,
 which means the cap fails open.
 
+Each successful refresh also appends one line per UTC day to
+`gateway-pricing-history.jsonl` beside the cache: the first snapshot of a day
+wins, later refreshes the same day are not recorded. The history answers what
+a model cost on a given day, so savings can be tracked over time with the
+rates that were current then, not today's.
+
     python3 -m airlock.pricing refresh    # pull now
     python3 -m airlock.pricing show       # print the cached alias prices
+    python3 -m airlock.pricing history    # print the daily price history
 """
 import json
 import os
@@ -33,6 +40,7 @@ from . import paths
 
 URL = "https://ai-gateway.vercel.sh/v1/models"
 CACHE_NAME = "gateway-pricing.json"
+HISTORY_NAME = "gateway-pricing-history.jsonl"
 ATTEMPT_NAME = "gateway-pricing.attempt"
 REFRESH_AFTER_S = 24 * 3600
 RETRY_AFTER_S = 3600
@@ -51,6 +59,10 @@ def _cache_path():
 
 def _attempt_path():
     return str(paths.state_file(ATTEMPT_NAME))
+
+
+def _history_path():
+    return str(paths.state_file(HISTORY_NAME))
 
 
 def _rate(value):
@@ -144,10 +156,11 @@ def _write_atomic(path, text):
     os.replace(tmp, path)
 
 
-def refresh(path=None, url=URL, now=None):
+def refresh(path=None, url=URL, now=None, history_path=None):
     """Pull the gateway list and rewrite the cache. Returns the aliases, or
     None when the pull failed or held no Claude prices. A failed pull leaves
-    the previous cache untouched."""
+    the previous cache untouched. A custom cache `path` keeps its history in
+    a sibling file, so tests never touch the real state dir."""
     try:
         with urllib.request.urlopen(url, timeout=FETCH_TIMEOUT_S) as resp:
             body = json.load(resp)
@@ -160,11 +173,69 @@ def refresh(path=None, url=URL, now=None):
         if jev:
             doc["jev"] = jev
         _write_atomic(path or _cache_path(), json.dumps(doc, indent=2, sort_keys=True))
+        if history_path is None:
+            history_path = _history_path() if path is None else path + ".history.jsonl"
+        _history_append(doc, history_path)
         _log_event("refresh", families=len(aliases))
         return aliases
     except Exception as exc:
         _log_event("refresh_failed", error=str(exc)[:300])
         return None
+
+
+def _day(ts):
+    return time.strftime("%Y-%m-%d", time.gmtime(ts))
+
+
+def _history_append(doc, path):
+    """Record the day's first snapshot in the history file. One JSON line per
+    UTC day; a later refresh the same day changes nothing. Best-effort: the
+    history must never fail a refresh."""
+    try:
+        day = _day(doc["fetched_at"])
+        entries = load_history(path)
+        if entries and entries[-1]["day"] == day:
+            return False
+        line = {"day": day, "fetched_at": doc["fetched_at"], "aliases": doc["aliases"]}
+        if "jev" in doc:
+            line["jev"] = doc["jev"]
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a") as f:
+            f.write(json.dumps(line, sort_keys=True) + "\n")
+        return True
+    except Exception:
+        return False
+
+
+def load_history(path=None):
+    """The daily snapshots as a list of {"day", "fetched_at", "aliases", ...},
+    oldest first, skipping malformed lines. Never raises."""
+    entries = []
+    try:
+        with open(path or _history_path(), "r") as f:
+            for raw in f:
+                try:
+                    entry = json.loads(raw)
+                except ValueError:
+                    continue
+                if (isinstance(entry, dict) and isinstance(entry.get("day"), str)
+                        and isinstance(entry.get("aliases"), dict)):
+                    entries.append(entry)
+    except Exception:
+        pass
+    return entries
+
+
+def rates_on(day, alias, history=None, path=None):
+    """The rate card for a model alias as of a "YYYY-MM-DD" day: the newest
+    snapshot on or before that day. None when the history has nothing that
+    old, so a caller costing past work can fall back rather than invent
+    numbers."""
+    history = history if history is not None else load_history(path)
+    for entry in reversed(history):
+        if entry["day"] <= day:
+            return rates(alias, {"aliases": entry["aliases"]})
+    return None
 
 
 def is_stale(cache, now=None):
@@ -239,6 +310,14 @@ def _main(argv):
     if cmd == "jev-rates":
         print("%.12g %.12g" % jev_rates())
         return 0
+    if cmd == "jev-rates-history":
+        # One line per history day, "<day> <input> <output>", a day without a
+        # jev row priced at the published default, so a caller can cost past
+        # days at the rates of their day.
+        for entry in load_history():
+            rin, rout = jev_rates({"jev": entry.get("jev")})
+            print("%s %.12g %.12g" % (entry["day"], rin, rout))
+        return 0
     if cmd == "show":
         cache = load()
         if not cache:
@@ -253,7 +332,18 @@ def _main(argv):
                 "-" if cr is None else "$%.2f/M" % (cr * 1e6),
                 "-" if cw is None else "$%.2f/M" % (cw * 1e6)))
         return 0
-    print("usage: python3 -m airlock.pricing [refresh|show|jev-rates]")
+    if cmd == "history":
+        entries = load_history()
+        if not entries:
+            print("no history yet; it grows one line per day of refreshes")
+            return 1
+        for entry in entries:
+            cache = {"aliases": entry["aliases"]}
+            cells = ["%s $%.2f/M" % (alias, (alias_price(alias, cache) or 0) * 1e6)
+                     for alias in sorted(entry["aliases"], key=lambda a: alias_price(a, cache) or 0)]
+            print("%s  %s" % (entry["day"], "  ".join(cells)))
+        return 0
+    print("usage: python3 -m airlock.pricing [refresh|show|history|jev-rates|jev-rates-history]")
     return 2
 
 
