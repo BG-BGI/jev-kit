@@ -10,17 +10,24 @@
 # (src/redact.ts).
 set -uo pipefail
 
-UPSTREAM_URL="https://github.com/BG-BGI/fast-jev-compaction"
-# Full 40-char SHA: a short prefix is brute-forceable by a hostile upstream,
-# and this plugin reads the TypeSafe key and ships tool output off-box.
-UPSTREAM_COMMIT="297fcb5d9e18c58d03351d8e64a8b1b331170bf2"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The pin lives in compaction/PIN so `jev-kit compaction update` and this script
+# read one source. Full 40-char SHA: a short prefix is brute-forceable by a
+# hostile upstream, and this plugin reads the TypeSafe key and ships tool
+# output off-box.
+pin_get() { sed -n "s/^$1=//p" "$SCRIPT_DIR/PIN" 2>/dev/null | head -1; }
+UPSTREAM_URL="$(pin_get url)"
+UPSTREAM_COMMIT="$(pin_get commit)"
+MIN_VERSION="$(pin_get min_claude)"
+case "$UPSTREAM_COMMIT" in
+  [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+  *) echo "compaction: compaction/PIN needs a full 40-char commit= line" >&2; exit 2 ;;
+esac
+[ -n "$UPSTREAM_URL" ] && [ -n "$MIN_VERSION" ] || { echo "compaction: compaction/PIN needs url= and min_claude=" >&2; exit 2; }
 PLUGIN_ID="fast-jev-compaction@fast-jev-compaction"
 COMPACTION_HOME="${COMPACTION_HOME:-$HOME/.local/share/jev-compaction}"
-MIN_VERSION="2.1.274"
 MODE="${COMPACTION_MODE:-tool}"
 case "$MODE" in tool|session|both) ;; *) echo "compaction: COMPACTION_MODE must be tool, session or both (got: $MODE)" >&2; exit 2 ;; esac
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat >&2 <<EOF

@@ -59,8 +59,19 @@ jev-kit config set r6 on --yes      # R6 (GUI/browser) on a headless machine
 jev-kit rollback --yes              # point `current` at the previous release
 jev-kit update --yes                # fast-forward from origin, redeploy, update plugins
 jev-kit plugins update --yes        # marketplace update, then plugin update
+jev-kit profile set owner --yes     # record that this machine is yours, not shared
+jev-kit compaction status           # pin, installed release, options with defaults
+jev-kit compaction set minChars 1200 --yes   # checked against the plugin's schema
+jev-kit compaction install --mode tool --yes # settings flag, permission, plugin
+jev-kit compaction update --yes     # move to the pin in compaction/PIN, keep options
+jev-kit compaction remove --yes     # uninstall; add --purge to delete releases
 jev-kit metrics report              # same as python3 -m airlock.metrics report
 ```
+
+Compaction sends tool output off the machine, so `compaction install` prints
+what leaves and does nothing without `--yes`. A mode change is one `set`, with
+no reinstall. `compaction set` refuses the API key option; the key stays in the
+key file.
 
 `update` fetches `origin` only, refuses a dirty checkout or a branch other than
 `main`, and runs `install/install.sh --guard`, which runs the tests before it

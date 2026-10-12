@@ -54,6 +54,32 @@ def build_parser():
     plu = plsub.add_parser("update")
     plu.add_argument("--yes", action="store_true", help="apply (default is a dry run)")
 
+    pr = sub.add_parser("profile", help="record whether this machine is yours (owner) or shared")
+    prsub = pr.add_subparsers(dest="action", required=True)
+    prsub.add_parser("get")
+    prs = prsub.add_parser("set")
+    prs.add_argument("value", choices=("owner", "shared"))
+    prs.add_argument("--yes", action="store_true", help="apply (default is a dry run)")
+
+    co = sub.add_parser("compaction", help="install, configure, update or remove fast-jev-compaction")
+    co.add_argument("--settings-file", help="settings.json to edit (default: $CLAUDE_CONFIG_DIR or ~/.claude)")
+    cosub = co.add_subparsers(dest="action", required=True)
+    cosub.add_parser("status")
+    cg = cosub.add_parser("get")
+    cg.add_argument("key", nargs="?")
+    cs = cosub.add_parser("set")
+    cs.add_argument("key")
+    cs.add_argument("value")
+    cu = cosub.add_parser("unset")
+    cu.add_argument("key")
+    ci = cosub.add_parser("install")
+    ci.add_argument("--mode", choices=("tool", "session", "both"), default="tool")
+    cosub.add_parser("update")
+    cr = cosub.add_parser("remove")
+    cr.add_argument("--purge", action="store_true", help="also delete downloaded releases")
+    for sp in (cs, cu, ci, cosub.choices["update"], cr):
+        sp.add_argument("--yes", action="store_true", help="apply (default is a dry run)")
+
     for name in PASSTHROUGH:
         sub.add_parser(name, help="run python3 -m airlock.%s from anywhere" % name, add_help=False)
     return p
@@ -80,5 +106,11 @@ def main(argv=None, out=None, err=None):
     if args.cmd == "plugins":
         from . import plugins
         return plugins.run(args, out, err)
+    if args.cmd == "profile":
+        from . import profile
+        return profile.run(args, out, err)
+    if args.cmd == "compaction":
+        from . import compaction
+        return compaction.run(args, out, err)
     build_parser().print_help(out)
     return 0
