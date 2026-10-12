@@ -57,8 +57,17 @@ jev-kit config set mode enforce     # dry run: prints the diff, writes nothing
 jev-kit config set mode enforce --yes
 jev-kit config set r6 on --yes      # R6 (GUI/browser) on a headless machine
 jev-kit rollback --yes              # point `current` at the previous release
+jev-kit update --yes                # fast-forward from origin, redeploy, update plugins
+jev-kit plugins update --yes        # marketplace update, then plugin update
 jev-kit metrics report              # same as python3 -m airlock.metrics report
 ```
+
+`update` fetches `origin` only, refuses a dirty checkout or a branch other than
+`main`, and runs `install/install.sh --guard`, which runs the tests before it
+deploys. `/reload-plugins` is session-only, so run it yourself afterwards.
+
+A mod's version has to change for `/plugin update` to see it. After editing
+`mods/jev-stats`, run `python3 tools/bump_mod.py`; a test fails if you forget.
 
 Every command that writes shows a diff first, backs the file up with a
 timestamp, and needs `--yes`. A machine marked `shared` in

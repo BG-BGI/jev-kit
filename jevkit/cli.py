@@ -44,6 +44,16 @@ def build_parser():
     r.add_argument("--settings-file", default="~/.claude/settings.json")
     r.add_argument("--yes", action="store_true", help="apply (default is a dry run)")
 
+    u = sub.add_parser("update", help="fast-forward from origin, redeploy, update plugins")
+    u.add_argument("--repo", help="path to the jev-kit checkout (default: recorded, then cwd)")
+    u.add_argument("--yes", action="store_true", help="apply (default is a dry run)")
+
+    pl = sub.add_parser("plugins", help="list or update the jev-kit marketplace plugins")
+    plsub = pl.add_subparsers(dest="action", required=True)
+    plsub.add_parser("list")
+    plu = plsub.add_parser("update")
+    plu.add_argument("--yes", action="store_true", help="apply (default is a dry run)")
+
     for name in PASSTHROUGH:
         sub.add_parser(name, help="run python3 -m airlock.%s from anywhere" % name, add_help=False)
     return p
@@ -64,5 +74,11 @@ def main(argv=None, out=None, err=None):
     if args.cmd == "rollback":
         from . import rollback
         return rollback.run(args, out, err)
+    if args.cmd == "update":
+        from . import update
+        return update.run(args, out, err)
+    if args.cmd == "plugins":
+        from . import plugins
+        return plugins.run(args, out, err)
     build_parser().print_help(out)
     return 0
