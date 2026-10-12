@@ -219,5 +219,89 @@ class TestHook(unittest.TestCase):
         self.assertFalse(enforce._cost_cap(_agent("fable"), "Bash", "enforce", {}))
 
 
+class TestHistory(unittest.TestCase):
+    """Daily price history: one JSONL line per UTC day of refreshes."""
+
+    def _refresh(self, path, now, body=None):
+        body = body if body is not None else {"data": GATEWAY}
+        with mock.patch.object(pricing.urllib.request, "urlopen") as op:
+            op.return_value.__enter__.return_value = io.StringIO(json.dumps(body))
+            return pricing.refresh(path=path, now=now)
+
+    def test_refresh_appends_one_line_per_day(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "cache.json")
+            day1, day1_later, day2 = 86400.0, 86400.0 + 7200, 2 * 86400.0
+            self.assertTrue(self._refresh(path, day1))
+            self.assertTrue(self._refresh(path, day1_later))
+            self.assertTrue(self._refresh(path, day2))
+            entries = pricing.load_history(path + ".history.jsonl")
+            self.assertEqual([e["day"] for e in entries], ["1970-01-02", "1970-01-03"])
+            self.assertEqual(entries[0]["fetched_at"], day1)
+            self.assertIn("sonnet", entries[0]["aliases"])
+
+    def test_history_records_jev_row(self):
+        body = {"data": GATEWAY + [{"id": "typesafe-ai/jev",
+                                    "pricing": {"input": "0.000000042", "output": "0"}}]}
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "cache.json")
+            self.assertTrue(self._refresh(path, 1, body))
+            entries = pricing.load_history(path + ".history.jsonl")
+            self.assertEqual(entries[0]["jev"], {"input": 4.2e-8, "output": 0.0})
+
+    def test_load_history_skips_junk_and_never_raises(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "h.jsonl")
+            good = {"day": "2026-10-12", "fetched_at": 1, "aliases": CACHE["aliases"]}
+            with open(path, "w") as f:
+                f.write("not json\n" + json.dumps({"day": 3}) + "\n" + json.dumps(good) + "\n")
+            self.assertEqual(pricing.load_history(path), [good])
+        self.assertEqual(pricing.load_history(os.path.join(d, "missing.jsonl")), [])
+
+    def test_rates_on_picks_newest_at_or_before_the_day(self):
+        old = {alias: dict(row, input=row["input"] / 2) for alias, row in CACHE["aliases"].items()}
+        history = [{"day": "2026-01-01", "fetched_at": 1, "aliases": old},
+                   {"day": "2026-06-01", "fetched_at": 2, "aliases": CACHE["aliases"]}]
+        self.assertEqual(pricing.rates_on("2026-03-01", "sonnet", history)["input"], 1e-6)
+        self.assertEqual(pricing.rates_on("2026-06-01", "sonnet", history)["input"], 2e-6)
+        self.assertEqual(pricing.rates_on("2026-12-31", "sonnet", history)["input"], 2e-6)
+        self.assertIsNone(pricing.rates_on("2025-12-31", "sonnet", history))
+        self.assertIsNone(pricing.rates_on("2026-07-01", "nope", history))
+        self.assertIsNone(pricing.rates_on("2026-07-01", "sonnet", []))
+
+    def test_history_cli_prints_days(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "h.jsonl")
+            with open(path, "w") as f:
+                f.write(json.dumps({"day": "2026-10-12", "fetched_at": 1,
+                                    "aliases": CACHE["aliases"]}) + "\n")
+            buf = io.StringIO()
+            with mock.patch.object(pricing, "_history_path", return_value=path), redirect_stdout(buf):
+                self.assertEqual(pricing._main(["history"]), 0)
+            self.assertIn("2026-10-12", buf.getvalue())
+            self.assertIn("sonnet", buf.getvalue())
+
+    def test_jev_rates_history_cli_prints_one_line_per_day(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "h.jsonl")
+            with open(path, "w") as f:
+                f.write(json.dumps({"day": "2026-10-11", "fetched_at": 1,
+                                    "aliases": CACHE["aliases"]}) + "\n")
+                f.write(json.dumps({"day": "2026-10-12", "fetched_at": 2, "aliases": CACHE["aliases"],
+                                    "jev": {"input": 5e-8, "output": 1e-9}}) + "\n")
+            buf = io.StringIO()
+            with mock.patch.object(pricing, "_history_path", return_value=path), redirect_stdout(buf):
+                self.assertEqual(pricing._main(["jev-rates-history"]), 0)
+            self.assertEqual(buf.getvalue().splitlines(),
+                             ["2026-10-11 4.2e-08 0", "2026-10-12 5e-08 1e-09"])
+
+    def test_history_cli_empty(self):
+        with tempfile.TemporaryDirectory() as d:
+            missing = os.path.join(d, "none.jsonl")
+            buf = io.StringIO()
+            with mock.patch.object(pricing, "_history_path", return_value=missing), redirect_stdout(buf):
+                self.assertEqual(pricing._main(["history"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
