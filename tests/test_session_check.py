@@ -249,12 +249,46 @@ class TestDeduplication(unittest.TestCase):
         state = {"last_key": "nokey", "shown": {"nokey": now - sc.REPEAT_AFTER_S - 1}}
         self.assertTrue(sc.should_show(state, "nokey", sc.REPEAT_AFTER_S, now))
 
+    def test_a_timestamp_in_the_future_does_not_suppress(self):
+        """After the clock steps back, a 'shown' stamp ahead of now would
+        silence the warning until the clock caught up; it is shown instead."""
+        now = 1_000_000.0
+        state = {"last_key": "nokey", "shown": {"nokey": now + 3600}}
+        self.assertTrue(sc.should_show(state, "nokey", sc.REPEAT_AFTER_S, now))
+
     def test_a_CHANGED_problem_is_shown_immediately(self):
         now = 1_000_000.0
         state = {"last_key": "health:down:daemon ping failed",
                  "shown": {"health:down:daemon ping failed": now - 60}}
         self.assertTrue(sc.should_show(
             state, "health:down:no API key resolves", sc.REPEAT_AFTER_S, now))
+
+    def _shown_again(self, first, second):
+        now = 1_000_000.0
+        state = {"last_key": first.key, "shown": {first.key: now - 180}}
+        return sc.should_show(state, second.key, second.repeat_s, now)
+
+    def test_a_stale_warning_three_minutes_older_is_not_news(self):
+        # The headline counts minutes; the key must not, or every session
+        # start inside the window shows it again.
+        first = sc.choose_warning(facts(health_age_s=3000.0, uptime_s=86400.0,
+                                        health_timer=True))
+        second = sc.choose_warning(facts(health_age_s=3180.0, uptime_s=86400.0,
+                                         health_timer=True))
+        self.assertNotEqual(first.headline, second.headline)
+        self.assertFalse(self._shown_again(first, second))
+
+    def test_a_health_reason_whose_numbers_drift_is_not_news(self):
+        def row(ms, rate):
+            return {"status": "degraded",
+                    "daemon_ask": {"ok": False, "error": "timed out after %dms" % ms},
+                    "last_hour": {"fail_open_rate": rate}}
+        first = sc.choose_warning(facts(health_row=row(1510, 0.31)))
+        second = sc.choose_warning(facts(health_row=row(1544, 0.34)))
+        self.assertFalse(self._shown_again(first, second))
+        third = sc.choose_warning(facts(health_row={
+            "status": "degraded", "direct_ask": {"ok": False}}))
+        self.assertTrue(self._shown_again(first, third))
 
     def test_an_empty_or_corrupt_state_shows_it(self):
         for state in ({}, None, "garbage", {"shown": "not a dict"}):

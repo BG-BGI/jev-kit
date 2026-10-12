@@ -49,7 +49,7 @@ import json
 import os
 import re
 
-from . import keyfile, paths
+from . import keyfile, paths, scope
 from .headless import cpu_count, is_small_host
 from .platform_compat import is_windows
 
@@ -129,30 +129,17 @@ class Rule:
 _SKIP_PREFIX = {"nice", "time", "command", "exec", "builtin", "stdbuf", "nohup", "ionice"}
 
 
-_HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z_0-9]*)\1")
-
-
 def strip_heredocs(command):
     """Drop heredoc BODIES from a command line, keeping the command that owns
     them. A heredoc body is data (a file being written, a prompt, a note), not
     something the shell executes, so words inside it must never trip a code
     rule. Seen live on 2026-09-19: a note containing the word for the
     privilege-elevation command was blocked as if it were that command.
-    Never raises; on anything odd it returns the input unchanged."""
+    The one implementation is airlock/scope.py's, which knows quoting and
+    here-strings. Never raises; on anything odd it returns the input
+    unchanged."""
     try:
-        if "<<" not in (command or ""):
-            return command
-        out = []
-        pending = []
-        for line in command.split("\n"):
-            if pending:
-                if line.strip() == pending[0]:
-                    pending.pop(0)
-                continue
-            out.append(line)
-            for m in _HEREDOC_RE.finditer(line):
-                pending.append(m.group(2))
-        return "\n".join(out)
+        return scope.strip_heredocs(command)
     except Exception:
         return command
 
@@ -215,6 +202,36 @@ def words(segment):
     return out
 
 
+# Wrappers whose own options (and, for timeout, a duration) come before the
+# command they run. Not skipping them hid `env sudo rm -rf /etc` from R5 and
+# `timeout 60 rm -rf /` from R7.
+_VALUE_WRAPPERS = {"env", "timeout"}
+_ENV_VALUE_OPTS = {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}
+_TIMEOUT_VALUE_OPTS = {"-s", "--signal", "-k", "--kill-after"}
+
+
+def _wrapped_command(toks):
+    """The tokens of the command an `env`/`timeout` wrapper runs, or None when
+    it runs none."""
+    wrapper, i = toks[0].rsplit("/", 1)[-1], 1
+    value_opts = _ENV_VALUE_OPTS if wrapper == "env" else _TIMEOUT_VALUE_OPTS
+    while i < len(toks):
+        t = toks[i]
+        if t == "--":
+            i += 1
+            break
+        if t.startswith("-") and len(t) > 1:
+            i += 2 if t in value_opts else 1
+            continue
+        if wrapper == "env" and _ASSIGN_RE.match(t):
+            i += 1
+            continue
+        break
+    if wrapper == "timeout":
+        i += 1  # the duration
+    return toks[i:] or None
+
+
 def program_of(segment):
     """First real command word of a segment, skipping leading VAR=val
     assignments and wrappers like nice/time. Returns (program, args)."""
@@ -222,6 +239,15 @@ def program_of(segment):
     while toks:
         if _ASSIGN_RE.match(toks[0]):
             toks = toks[1:]
+            continue
+        if toks[0].rsplit("/", 1)[-1] in _VALUE_WRAPPERS:
+            # `env FOO=1 sudo ...`, `timeout 5 rm -rf /`: the wrapper runs the
+            # command after its own options. A bare `env` (or one with nothing
+            # after its options) is itself the program and stays it.
+            rest = _wrapped_command(toks)
+            if rest is None:
+                break
+            toks = rest
             continue
         if toks[0] in _SKIP_PREFIX:
             toks = toks[1:]
@@ -499,8 +525,23 @@ def _path_candidates(tok):
     return out
 
 
-def _secret_path_in(tokens):
+_REDIR_SPLIT_RE = re.compile(r"\d*[<>]+&?")
+
+
+def _path_parts(tokens):
+    """Each token, and the paths glued to a redirection inside it: `<.env`
+    and `.env>/dev/stdout` are one word to `words()`, and the anchored
+    secret-path patterns saw neither `.env`."""
     for tok in tokens:
+        yield tok
+        if "<" in tok or ">" in tok:
+            for part in _REDIR_SPLIT_RE.split(tok):
+                if part and part != tok:
+                    yield part
+
+
+def _secret_path_in(tokens):
+    for tok in _path_parts(tokens):
         if tok.startswith("-"):
             continue
         for cand in _path_candidates(tok):
@@ -533,6 +574,47 @@ def _quiet_grep(args):
         if a in ("--quiet", "--silent", "--count", "--files-with-matches"):
             return True
     return False
+
+
+_SUBST_RE = re.compile(r"\$\(([^()]*)\)|`([^`]*)`")
+_ASSIGN_BUILTINS = {"export", "local", "readonly", "declare", "typeset"}
+
+
+def _substituted_segments(command):
+    """Segments of every `$(...)` and backtick substitution in the command.
+    `echo "$(cat .env)"` prints the file, but its only segment is an echo."""
+    out = []
+    try:
+        command = strip_heredocs(command)
+        for m in _SUBST_RE.finditer(command):
+            # `KEY=$(cat ~/.config/jev-kit/env)` loads the value without
+            # printing it, which is what R1's own advice asks for.
+            before = split_segments(command[:m.start()])
+            toks = words(before[-1]) if before else []
+            if toks and all(_ASSIGN_RE.match(t) or t in _ASSIGN_BUILTINS for t in toks):
+                continue
+            inner = m.group(1) if m.group(1) is not None else m.group(2)
+            if inner.startswith("<"):
+                inner = "cat " + inner[1:]  # `$(<.env)` is bash for `$(cat .env)`
+            out.extend(split_segments(inner))
+    except Exception:
+        return []
+    return out
+
+
+def _reader_behind(prog, args):
+    """The command `xargs` or `find -exec` runs, when that is what reads the
+    file: `xargs cat .env` and `find . -name .env -exec cat {} +` print it
+    just as `cat .env` does."""
+    if prog == "xargs":
+        i = _first_positional(args, _XARGS_VALUE_OPTS)
+        if i is not None:
+            return args[i].rsplit("/", 1)[-1], args[i + 1:]
+    if prog == "find":
+        for i, a in enumerate(args):
+            if a in ("-exec", "-execdir", "-ok", "-okdir") and i + 1 < len(args):
+                return args[i + 1].rsplit("/", 1)[-1], args[:i] + args[i + 2:]
+    return prog, args
 
 
 def prefilter_secret(ctx):
@@ -581,8 +663,8 @@ def prefilter_secret(ctx):
     if not command:
         return None
 
-    for seg in ctx["segments"]:
-        prog, args = program_of(seg)
+    for seg in ctx["segments"] + _substituted_segments(command):
+        prog, args = _reader_behind(*program_of(seg))
         if prog is None:
             continue
 
@@ -651,9 +733,10 @@ def prefilter_secret(ctx):
 
 def questions_secret(ctx, match):
     from . import redact
-    # Redacted like every other state sent to Jev (see redact.py's contract).
-    # This rule's ambiguous branch fires exactly when the command text looks
-    # token-ish, so raw text here is the likeliest to carry a literal secret.
+    # This state leaves the box. Redacted like every other state sent to Jev
+    # (see redact.py's contract). This rule's ambiguous branch fires exactly
+    # when the command text looks token-ish, so raw text here is the
+    # likeliest to carry a literal secret.
     state = {
         "command": redact.redact_and_truncate_command(ctx["command"] or "")[:2000],
         "tool_name": ctx["tool_name"],
@@ -1014,9 +1097,62 @@ R5_SUGGESTION = (
 )
 
 
+_PKG_REFRESH = {"update"}
+
+
+def _sudo_rest(toks, idx):
+    """The command sudo runs: its own options, their values and any leading
+    VAR=val assignments (`sudo DEBIAN_FRONTEND=noninteractive apt-get ...`)
+    stripped, so the real program is rest[0]."""
+    i = idx + 1
+    while i < len(toks):
+        t = toks[i]
+        if t == "--":
+            i += 1
+            break
+        if t.startswith("--"):
+            # `--user root`: the value is the next word (`--user=root` is one)
+            i += 2 if t in _SUDO_VALUE_LONG else 1
+            continue
+        if t.startswith("-"):
+            # A short cluster (`-iu root`, `-uroot`): the first value-taking
+            # letter takes the rest of the word, or the next word if none.
+            i += 1
+            for j, ch in enumerate(t[1:], 1):
+                if ch in _SUDO_VALUE_SHORT:
+                    if j == len(t) - 1:
+                        i += 1
+                    break
+            continue
+        if _ASSIGN_RE.match(t):
+            i += 1
+            continue
+        break
+    return [t for t in toks[i:] if not t.startswith("-") or t in _PKG_SUBS]
+
+
+def _is_named_install(rest):
+    prog = rest[0].rsplit("/", 1)[-1] if rest else ""
+    return (prog in _PKG_INSTALLERS and len(rest) > 2 and rest[1] in _PKG_SUBS)
+
+
 def prefilter_sudo(ctx):
     if ctx["tool_name"] not in SHELL_TOOLS:
         return None
+    # `sudo apt-get update && sudo apt-get install -y jq` is ONE named install:
+    # the index refresh is part of it. Only allowed when the same command
+    # carries the named install itself.
+    has_named_install = False
+    for seg in ctx["segments"]:
+        prog0, _a = program_of(seg)
+        if prog0 != "sudo":
+            continue
+        toks0 = words(seg)
+        for i, t in enumerate(toks0):
+            if t.rsplit("/", 1)[-1] == "sudo":
+                if _is_named_install(_sudo_rest(toks0, i)):
+                    has_named_install = True
+                break
     for seg in ctx["segments"]:
         toks = words(seg)
         if not toks:
@@ -1033,7 +1169,7 @@ def prefilter_sudo(ctx):
                 break
         if idx is None:
             continue
-        rest = [t for t in toks[idx + 1:] if not t.startswith("-") or t in _PKG_SUBS]
+        rest = _sudo_rest(toks, idx)
         flags = toks[idx + 1:]
 
         # any sudo touching a path under $HOME
@@ -1046,10 +1182,11 @@ def prefilter_sudo(ctx):
                 )
 
         prog = rest[0].rsplit("/", 1)[-1] if rest else ""
-        if prog in _PKG_INSTALLERS:
-            subs = [t for t in rest[1:]]
-            if subs and subs[0] in _PKG_SUBS and len(subs) > 1:
-                continue  # named package install: allowed
+        if _is_named_install(rest):
+            continue  # named package install: allowed
+        if (prog in _PKG_INSTALLERS and len(rest) == 2 and rest[1] in _PKG_REFRESH
+                and has_named_install):
+            continue  # index refresh in front of a named install: allowed
         return Match(
             "`sudo %s` is not a named system package install" % (" ".join(rest[:3]) or "<nothing>"),
             R5_SUGGESTION,
@@ -1128,8 +1265,8 @@ _DD_HARMLESS = ("/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "/dev/fd/
 # shell runs whatever came down the wire. `curl page | bash norm.sh` hands the
 # page to a local script as stdin and is not this.
 _PIPE_TO_SHELL_RE = re.compile(
-    r"\b(curl|wget)\b[^|;&\n]*\|\s*(?:(?:\S*/)?sudo\s+(?:-\S+\s+)*)?(?:(?:\S*/)?env\s+)?(?:\S*/)?(?:ba|z|da|k)?sh\b"
-    r"(?:\s+-[^\s-]\S*)*\s*(?:--(?:\s|$)|$|[;&|\n)])"
+    r"\b(curl|wget)\b[^|;&\n]*\|\s*(?:(?:\S*/)?sudo\s+(?:-[A-Za-z]*[ugpCUrtDRTh]\s+\S+\s+|--(?:user|group)\s+\S+\s+|-\S+\s+)*)?(?:(?:\S*/)?env\s+)?(?:\S*/)?(?:ba|z|da|k)?sh\b"
+    r"(?:\s+-[^\s-]\S*)*\s*(?:--?(?:\s|$)|$|[;&|\n)])"
 )
 # Quoted text is data (a commit message, an echo), never a pipeline. Blanked
 # before the pipe-to-shell search so `git commit -m 'avoid curl x | bash; ...'`
@@ -1137,7 +1274,15 @@ _PIPE_TO_SHELL_RE = re.compile(
 _QUOTED_RE = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
 # xargs options that take the NEXT token as their value, so that token is
 # not the command xargs runs (`xargs -n 1 rm -rf`, Codex P2, PR #17).
-_XARGS_VALUE_OPTS = {"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s"}
+# GNU's long forms take a separate value too (`xargs --max-procs 4 rm -rf`).
+_XARGS_VALUE_OPTS = {
+    "-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s",
+    "--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars",
+    "--process-slot-var",
+}
+# git's global options that take the next token as their value.
+_GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                   "--exec-path", "--config-env", "--super-prefix"}
 # redis-cli options that take the next token as a value. The first token
 # left after them is the Redis command; a later FLUSHALL is a key or a
 # pattern (`redis-cli GET FLUSHALL`, Codex P2, PR #17).
@@ -1175,12 +1320,34 @@ def _first_positional(args, value_opts):
     return None
 
 
+# sudo options that take a value. Skipping only the option word read the
+# value as the program, so `sudo -u root rm -rf /` passed R7 as `root -rf /`.
+_SUDO_VALUE_SHORT = set("ugpCUrtDRTh")
+_SUDO_VALUE_LONG = {
+    "--user", "--group", "--prompt", "--close-from", "--other-user", "--role",
+    "--type", "--chdir", "--chroot", "--command-timeout", "--host",
+}
+
+
 def _unsudo(prog, args):
     """R7 judges what runs, not how it was elevated (R5 owns `sudo`)."""
     while prog == "sudo" and args:
         rest = list(args)
         while rest and rest[0].startswith("-"):
-            rest = rest[1:]
+            opt, rest = rest[0], rest[1:]
+            if opt == "--":
+                break
+            if opt.startswith("--"):
+                if opt in _SUDO_VALUE_LONG and rest:
+                    rest = rest[1:]
+                continue
+            # A short cluster (`-iu root`, `-uroot`): the first value-taking
+            # letter takes the rest of the word, or the next word if none.
+            for j, ch in enumerate(opt[1:], 1):
+                if ch in _SUDO_VALUE_SHORT:
+                    if j == len(opt) - 1 and rest:
+                        rest = rest[1:]
+                    break
         if not rest:
             break
         prog, args = rest[0].rsplit("/", 1)[-1], rest[1:]
@@ -1201,6 +1368,8 @@ def _whole_tree_target(a):
     if raw in ("/", "/*", "~", "~/", "$HOME", "${HOME}", "*", ".", "./", "..", "../", "./*"):
         return raw
     p = _expand(raw)
+    if p.endswith("/*"):
+        p = p[:-2]  # `rm -rf ~/*` empties the home directory just the same
     if p.rstrip("/") == HOME:
         return raw
     return None
@@ -1212,6 +1381,12 @@ def prefilter_destructive(ctx):
     for seg in ctx["segments"]:
         prog, args = _unsudo(*program_of(seg))
         if prog == "git" and args:
+            # The subcommand comes after git's global options: `git -C repo
+            # push --force` is still a force-push.
+            i = _first_positional(args, _GIT_VALUE_OPTS)
+            args = args[i:] if i is not None else []
+            if not args:
+                continue
             sub = args[0]
             joined = " ".join(args)
             if sub == "push" and re.search(r"(^|\s)(--force|-f)(\s|$)", " " + joined):
@@ -1281,6 +1456,208 @@ def prefilter_destructive(ctx):
     return None
 
 
+# --- R7-root-delete: the one destructive shape that is denied ------------------
+#
+# Self-contained on purpose: its own unwrapping, so the rule reads the same on
+# any release and does not move when the shared shell helpers do.
+
+R7_ROOT_SUGGESTION = (
+    "A recursive delete of / or of the home directory is never a step in a task. "
+    "Name the exact directory you mean, or ask the human."
+)
+
+_RD_SHELLS = {"sh", "bash", "dash", "zsh", "ksh"}
+_RD_PLAIN_WRAPPERS = {"nice", "time", "command", "exec", "builtin", "stdbuf", "nohup", "ionice", "doas"}
+# Options that take the NEXT word as their value, per wrapper.
+_RD_VALUE_OPTS = {
+    "env": {"-u", "--unset", "-C", "--chdir"},
+    "timeout": {"-s", "--signal", "-k", "--kill-after"},
+    "nice": {"-n", "--adjustment"},
+    "ionice": {"-c", "--class", "-n", "--classdata", "-p", "--pid"},
+    "stdbuf": {"-i", "-o", "-e"},
+    "doas": {"-u", "-C"},
+    "sudo": {"-u", "--user", "-g", "--group", "-p", "--prompt", "-C", "--close-from", "-D",
+             "--chdir", "-h", "--host", "-r", "--role", "-t", "--type", "-T", "--command-timeout",
+             "-U", "--other-user", "-R", "--chroot"},
+}
+_RD_SUDO_SHORT_VALUE = set("ugpCDhrtTUR")
+_RD_SUBST_RE = re.compile(r"\$\(([^()]*)\)|`([^`]*)`")
+# Compound-command words that put a command after them: `then rm -rf /`.
+_RD_KEYWORDS = {"if", "then", "elif", "else", "do", "while", "until"}
+# Shell options that take the next word as their value: `bash -o pipefail -c`.
+_RD_SHELL_VALUE_OPTS = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
+
+
+def _rd_unquote(tok):
+    """Bash quote removal for one word: `\\rm` is `rm`, `\\/` is `/`, `"/"*` is
+    `/*`. An escaped leading tilde is a file literally named `~`, so it is
+    kept escaped and never matches the home directory."""
+    out, i, n = [], 0, len(tok)
+    while i < n:
+        ch = tok[i]
+        if ch == "\\" and i + 1 < n:
+            if tok[i + 1] == "~" and i == 0:
+                out.append("\\~")
+            else:
+                out.append(tok[i + 1])
+            i += 2
+            continue
+        if ch not in "'\"":
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _rd_shell_script(args):
+    """The script of `sh -c SCRIPT`, also when -c sits in a short-option
+    cluster (`bash -lc`, `sh -xc`). Like bash, options are read up to the
+    first non-option word, and a cluster ending in o/O takes the next word as
+    its value (`-euo pipefail`, `-co pipefail SCRIPT`). None when the shell
+    runs no -c script."""
+    has_c, i = False, 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            i += 1  # `bash -c -- 'script'`
+            break
+        if a in _RD_SHELL_VALUE_OPTS:
+            i += 2
+            continue
+        if a.startswith("-") and not a.startswith("--") and len(a) > 1:
+            has_c = has_c or "c" in a[1:]
+            i += 2 if a[-1] in "oO" else 1
+            continue
+        if a.startswith("--") or (a.startswith("+") and len(a) > 1):
+            i += 1
+            continue
+        break
+    if not has_c:
+        return None
+    return " ".join(args[i:]).strip("'\"")
+
+
+def _rd_command(toks, depth=0):
+    """(program, args) behind assignments, wrappers and sudo, or the inner
+    script's tokens for `sh -c`. Returns (None, []) when nothing runs."""
+    while toks:
+        if len(toks) > 1 and toks[1] == ")":
+            toks = toks[2:]  # a case pattern with a space before the paren: `x ) cmd`
+            continue
+        t = _rd_unquote(toks[0].lstrip("({!"))
+        if not t or t in _RD_KEYWORDS:
+            toks = toks[1:]
+            continue
+        if t == "case":
+            # `case WORD in PATTERN) cmd`: the command starts after the pattern
+            toks = toks[toks.index("in") + 1:] if "in" in toks else []
+            continue
+        if t.endswith(")") and "(" not in t:
+            toks = toks[1:]  # a case pattern: `x)`, `a|b)`
+            continue
+        if _ASSIGN_RE.match(t):
+            toks = toks[1:]
+            continue
+        base = t.rsplit("/", 1)[-1]
+        if base in ("env", "timeout", "sudo") or base in _RD_PLAIN_WRAPPERS:
+            rest = toks[1:]
+            value_opts = _RD_VALUE_OPTS.get(base, set())
+            while rest and rest[0].startswith("-") and rest[0] != "-":
+                opt, rest = rest[0], rest[1:]
+                if opt == "--":
+                    break
+                if "=" in opt:
+                    continue
+                if opt in value_opts:
+                    rest = rest[1:]
+                    continue
+                if base == "sudo" and not opt.startswith("--"):
+                    # a short cluster: `-iu root` takes the next word
+                    for j, ch in enumerate(opt[1:], 1):
+                        if ch in _RD_SUDO_SHORT_VALUE:
+                            if j == len(opt) - 1:
+                                rest = rest[1:]
+                            break
+                if base == "nice" and opt[1:].lstrip("-").isdigit():
+                    continue  # `nice -10 cmd`
+            if base == "env":
+                if rest and rest[0] == "-":
+                    rest = rest[1:]
+                while rest and _ASSIGN_RE.match(rest[0]):
+                    rest = rest[1:]
+            if base == "timeout" and rest:
+                rest = rest[1:]  # the duration
+            if not rest:
+                return None, []
+            toks = rest
+            continue
+        return base, toks[1:]
+    return None, []
+
+
+def _rd_root_or_home(a):
+    """True for an rm target that is the filesystem root or the home
+    directory itself, or every child of either (`/*`, `~/*`)."""
+    if a.endswith(")") and "(" not in a:
+        a = a.rstrip(")")  # `(cd x && rm -rf /)`: the subshell's closing paren
+    if a.endswith(";"):
+        a = a.rstrip(";")  # `{ rm -rf /; }`
+    if not a:
+        return False
+    if a.strip("/") == "" or a in ("/*", "~", "~/", "~/*", "$HOME", "${HOME}", "$HOME/*", "${HOME}/*"):
+        return True
+    p = _expand(a)
+    if p.endswith("/*"):
+        p = p[:-2]
+    return p.rstrip("/") in ("", HOME)
+
+
+def _rd_hit(seg, depth=0):
+    prog, args = _rd_command(words(seg))
+    script = _rd_shell_script(args) if prog in _RD_SHELLS and depth < 2 else None
+    if script is not None:
+        for inner in split_segments(script):
+            hit = _rd_hit(inner, depth + 1)
+            if hit:
+                return hit
+        return None
+    if prog != "rm":
+        return None
+    args = [_rd_unquote(a) for a in args]
+    # After `--` every word is a file name, `-r` included.
+    end = args.index("--") if "--" in args else len(args)
+    opts = [a for a in args[:end] if a.startswith("-")]
+    operands = [a for a in args[:end] if not a.startswith("-")] + args[end + 1:]
+    if not any(a == "--recursive" or not a.startswith("--") and "r" in a.lower() for a in opts):
+        return None
+    for a in operands:
+        if _rd_root_or_home(a):
+            return a
+    return None
+
+
+def prefilter_root_delete(ctx):
+    """`rm -r` of `/`, `/*`, `~`, `~/*` or `$HOME`, behind any wrapper, past
+    sudo and its options, inside `sh -c`, `$(...)` or backticks. R7-destructive
+    only warns; this shape alone is denied (Jonathan, 2026-10-02). A bare `*`,
+    `.` or a named subdirectory stays R7-destructive's warning."""
+    if ctx["tool_name"] not in SHELL_TOOLS:
+        return None
+    segs = list(ctx["segments"])
+    try:
+        for m in _RD_SUBST_RE.finditer(strip_heredocs(ctx.get("command") or "")):
+            segs.extend(split_segments(m.group(1) if m.group(1) is not None else m.group(2)))
+    except Exception:
+        pass
+    for seg in segs:
+        hit = _rd_hit(seg)
+        if hit:
+            # strict: neither an `[airlock-ok: ...]` stamp nor the loop
+            # allowance (a repeat of a denied call passes) lets this through.
+            return Match("`rm -r %s` would delete the whole filesystem or home directory" % hit,
+                         R7_ROOT_SUGGESTION, extra={"strict": True})
+    return None
+
+
 # --- R9: committing a secret -------------------------------------------------
 
 R9_SUGGESTION = (
@@ -1317,12 +1694,15 @@ def prefilter_commit_secret(ctx):
         prog, args = program_of(seg)
         if prog != "git" or not args:
             continue
-        if args[0] not in ("add", "commit", "stage"):
+        # Skip git's global options, or `git -C repo add .env` and
+        # `git -c k=v commit -m <token>` read as no subcommand at all.
+        i = _first_positional(args, _GIT_VALUE_OPTS)
+        if i is None or args[i] not in ("add", "commit", "stage"):
             continue
         git_write = True
-        hit = _secret_path_in(args[1:])
+        hit = _secret_path_in(args[i + 1:])
         if hit:
-            return Match("`git %s` would stage a secret file (%s)" % (args[0], hit), R9_SUGGESTION,
+            return Match("`git %s` would stage a secret file (%s)" % (args[i], hit), R9_SUGGESTION,
                          extra={"strict": True})
 
     if not git_write:
@@ -2080,6 +2460,13 @@ RULES = [
         action="warn",
         prefilter=prefilter_destructive,
         why="CLAUDE.md: ask first for anything hard to reverse or outward-facing.",
+    ),
+    Rule(
+        id="R7-root-delete",
+        tools=SHELL_TOOLS,
+        action="deny",
+        prefilter=prefilter_root_delete,
+        why="A recursive delete of / or the home directory is never part of a task.",
     ),
     Rule(
         id="R8-tier-guard",

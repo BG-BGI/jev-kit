@@ -15,7 +15,7 @@ Protocol: one JSON object per line in, one JSON object per line out.
   Request:  {"id": "...", "body": {"state":..., "model":..., "questions":...}, "timeout_s": 5}
   Response: {"id": "...", "ok": true, "status": 200, "response": {...},
              "latency_ms": N, "reused_connection": true|false}
-         or {"id": "...", "ok": false, "error": "..."}
+         or {"id": "...", "ok": false, "error": "...", "timed_out": true|absent}
   Also: {"op": "ping"} -> {"ok": true, "pong": true}
         {"op": "stats"} -> {"ok": true, "stats": {...}}
 
@@ -68,6 +68,9 @@ _RETRYABLE = (
     ConnectionError,  # covers BrokenPipeError, ConnectionResetError
     OSError,
 )
+
+# socket.timeout is an OSError, so it has to be caught before _RETRYABLE.
+_TIMEOUTS = (socket.timeout, TimeoutError)
 
 
 def _socket_dir_and_path():
@@ -134,6 +137,33 @@ class ConnectionPool:
             i = next(self._rr)
         return self.slots[i % len(self.slots)]
 
+    def _acquire(self, timeout_s):
+        """Take a slot's lock and return the slot. A free slot is taken at
+        once, starting from the round-robin pick, so one slow judgement never
+        holds up a caller while another connection sits idle. When every slot
+        is busy, wait on the round-robin pick for at most timeout_s: the
+        caller's budget runs while it queues, and a client that gives up on
+        the socket falls back to a direct call while this request would still
+        go out later and be billed twice."""
+        first = self._pick()
+        start = self.slots.index(first)
+        n = len(self.slots)
+        for k in range(n):
+            slot = self.slots[(start + k) % n]
+            if slot.lock.acquire(blocking=False):
+                return slot
+        if first.lock.acquire(timeout=max(0.0, timeout_s)):
+            return first
+        raise TimeoutError("no free connection within %ss" % timeout_s)
+
+    @staticmethod
+    def _drop(slot):
+        try:
+            slot.conn.close()
+        except Exception:
+            pass
+        slot.conn = None
+
     @staticmethod
     def _do(conn, path, body_bytes, headers, timeout_s):
         try:
@@ -148,23 +178,44 @@ class ConnectionPool:
 
     def request(self, path, body_bytes, headers, timeout_s):
         """Returns (status, raw_bytes, reused_connection_bool). Reconnects and
-        retries exactly once if the connection turns out to be dead."""
-        slot = self._pick()
-        with slot.lock:
+        retries exactly once if the connection turns out to be dead, within
+        whatever is left of timeout_s: queueing for a slot and the first
+        attempt both spend the same budget."""
+        deadline = time.monotonic() + timeout_s
+        slot = self._acquire(timeout_s)
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("no time left after waiting for a connection")
             reused = slot.conn is not None
             if slot.conn is None:
-                slot.conn = self._factory(timeout_s)
+                slot.conn = self._factory(remaining)
             try:
-                status, raw = self._do(slot.conn, path, body_bytes, headers, timeout_s)
+                status, raw = self._do(slot.conn, path, body_bytes, headers, remaining)
                 return status, raw, reused
+            except _TIMEOUTS:
+                # A timeout is a slow answer, not a dead connection: the POST
+                # was already sent, so a retry would bill the same judgement
+                # twice and double the wait. Drop the half-used connection
+                # and let the caller fail open.
+                self._drop(slot)
+                raise
             except _RETRYABLE:
+                self._drop(slot)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("no time left to retry a dropped connection")
+                slot.conn = self._factory(remaining)
                 try:
-                    slot.conn.close()
+                    status, raw = self._do(slot.conn, path, body_bytes, headers, remaining)
                 except Exception:
-                    pass
-                slot.conn = self._factory(timeout_s)
-                status, raw = self._do(slot.conn, path, body_bytes, headers, timeout_s)
+                    # Never leave a half-used connection in the slot for the
+                    # next caller to trip over.
+                    self._drop(slot)
+                    raise
                 return status, raw, False
+        finally:
+            slot.lock.release()
 
 
 class Stats:
@@ -233,7 +284,12 @@ def _handle_ask(req, api_key, pool, stats):
         latency_ms = int((time.monotonic() - start) * 1000)
         stats.record(latency_ms, False, ok=False)
         _log(id_, "error", latency_ms, False, 0, 0)
-        return {"id": id_, "ok": False, "error": redact.redact(str(exc))[:300]}
+        reply = {"id": id_, "ok": False, "error": redact.redact(str(exc))[:300]}
+        if isinstance(exc, _TIMEOUTS):
+            # Tells the client the budget is already spent, so it must not
+            # spend it a second time on a direct call.
+            reply["timed_out"] = True
+        return reply
 
     latency_ms = int((time.monotonic() - start) * 1000)
 

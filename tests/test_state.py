@@ -47,10 +47,30 @@ class TestLoopState(unittest.TestCase):
         state_mod.record_denial("s1", ("bash", "find / -name x"))
         self.assertFalse(state_mod.was_recently_denied("s1", ("bash", "find / -name y"), 600))
 
+    def test_wrong_shaped_session_row_does_not_disable_recording(self):
+        # A session row that is not a dict used to make _prune raise inside
+        # record_denial, which then gave up on every call from then on.
+        state_mod.STATE_DIR.mkdir(parents=True, exist_ok=True)
+        state_mod.STATE_FILE.write_text('{"old": ["x"], "s1": "bad"}')
+        self.assertFalse(state_mod.was_recently_denied("s1", ("bash", "ls"), 600))
+        key = ("bash", "find / -name x")
+        state_mod.record_denial("s2", key)
+        self.assertTrue(state_mod.was_recently_denied("s2", key, 600))
+        state_mod.record_denial("s1", key)
+        self.assertTrue(state_mod.was_recently_denied("s1", key, 600))
+
     def test_expired_denial_not_seen(self):
         key = ("agent", "do the thing")
         state_mod.record_denial("s1", key)
         with mock.patch("time.time", return_value=time.time() + 700):
+            self.assertFalse(state_mod.was_recently_denied("s1", key, 600))
+
+    def test_a_denial_stamped_in_the_future_is_not_seen(self):
+        """After the clock steps back, a future stamp read as 'recent' and
+        loop protection let the repeat through: the unsafe direction."""
+        key = ("bash", "find / -name x")
+        state_mod.record_denial("s1", key)
+        with mock.patch("time.time", return_value=time.time() - 3000):
             self.assertFalse(state_mod.was_recently_denied("s1", key, 600))
 
     @posix_only("a POSIX mode; on Windows privacy comes from the\n"
@@ -67,6 +87,15 @@ class TestLoopState(unittest.TestCase):
         state_mod.STATE_FILE.write_text("not json{{{")
         self.assertFalse(state_mod.was_recently_denied("s1", ("bash", "x"), 600))
         # record_denial must not raise even starting from a corrupt file.
+        state_mod.record_denial("s1", ("bash", "x"))
+        self.assertTrue(state_mod.was_recently_denied("s1", ("bash", "x"), 600))
+
+    def test_wrong_shaped_session_entry_never_raises(self):
+        """Valid JSON of the wrong shape (a session mapped to a list) must
+        read as "no prior denial" and must not block later recording."""
+        state_mod._ensure_dir()
+        state_mod.STATE_FILE.write_text('{"s1": [1, 2], "s2": "x"}')
+        self.assertFalse(state_mod.was_recently_denied("s1", ("bash", "x"), 600))
         state_mod.record_denial("s1", ("bash", "x"))
         self.assertTrue(state_mod.was_recently_denied("s1", ("bash", "x"), 600))
 
