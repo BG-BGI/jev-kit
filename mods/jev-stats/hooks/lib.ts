@@ -1,4 +1,4 @@
-import type { Period, PeriodStats, Stats } from '../types'
+import type { ModelStats, Period, PeriodStats, Stats } from '../types'
 
 export type Bounds = { day: string; week: string; month: string }
 
@@ -42,9 +42,46 @@ export function buildSql(sessionId: string, b: Bounds): string {
   )
 }
 
+/** Trimmed-token savings per model, one row per model, one column per period.
+ *  Rows from before the model column existed group under 'unknown'. */
+export function buildModelSql(sessionId: string, b: Bounds): string {
+  const sid = sessionId.replace(/'/g, "''")
+  const since = [b.day, b.week, b.month].sort()[0]
+  const cols = (expr: string, name: string) =>
+    ([
+      ['session', `session_id='${sid}'`],
+      ['day', `ts>='${b.day}'`],
+      ['week', `ts>='${b.week}'`],
+      ['month', `ts>='${b.month}'`],
+    ] as Array<[Period, string]>)
+      .map(([p, w]) => `COALESCE(SUM(CASE WHEN ${w} THEN ${expr} ELSE 0 END),0)/4 AS ${name}_${p}`)
+      .join(', ')
+  return `SELECT COALESCE(model,'unknown') AS model,
+ ${cols('chars_before-chars_after', 'saved')},
+ ${cols('(chars_before-chars_after)*COALESCE(requests_after,0)', 'eff')}
+FROM compaction WHERE outcome='trimmed' AND (ts>='${since}' OR session_id='${sid}')
+GROUP BY 1 ORDER BY eff_month DESC;`
+}
+
+export function parseModelRows(rows: unknown): ModelStats[] {
+  if (!Array.isArray(rows)) return []
+  const P: Period[] = ['session', 'day', 'week', 'month']
+  return rows.map(row => {
+    const r = row as Record<string, unknown>
+    const pick = (k: string) =>
+      Object.fromEntries(P.map(p => [p, Number(r[`${k}_${p}`]) || 0])) as Record<Period, number>
+    return { model: String(r.model ?? 'unknown'), saved: pick('saved'), eff: pick('eff') }
+  })
+}
+
+/** claude-sonnet-5-5 -> sonnet-5-5, so the name fits the pane. */
+export function shortModel(m: string): string {
+  return m.replace(/^claude-/, '').replace(/-\d{8}$/, '')
+}
+
 const EMPTY: PeriodStats = { n: 0, denied: 0, jev: 0, cost: 0, tok: 0, saved: 0, eff: 0 }
 
-export function parseRows(rows: unknown, updatedAt: string): Stats {
+export function parseRows(rows: unknown, updatedAt: string, models: ModelStats[] = []): Stats {
   const periods: Record<Period, PeriodStats> = {
     session: { ...EMPTY },
     day: { ...EMPTY },
@@ -67,7 +104,7 @@ export function parseRows(rows: unknown, updatedAt: string): Stats {
       }
     }
   }
-  return { periods, updatedAt }
+  return { periods, models, updatedAt }
 }
 
 export function fmt(n: number): string {

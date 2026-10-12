@@ -10,8 +10,11 @@ export type PeriodStats = {
   eff: number
 }
 
+export type ModelStats = { model: string; saved: Record<Period, number>; eff: Record<Period, number> }
+
 export type Stats = {
   periods: Record<Period, PeriodStats>
+  models: ModelStats[]
   updatedAt: string
 }
 
