@@ -1,6 +1,16 @@
 import { expect, test } from 'claude-code/testing'
 
-import { boundaries, buildModelSql, buildSql, fmt, parseModelRows, parseRows, shortModel } from './lib'
+import {
+  boundaries,
+  buildModelSql,
+  buildSql,
+  fmt,
+  fmtUsd,
+  parseModelRows,
+  parseRates,
+  parseRows,
+  shortModel,
+} from './lib'
 
 test('boundaries order: month <= week <= day', () => {
   const b = boundaries(new Date('2026-10-07T15:30:00'))
@@ -59,4 +69,20 @@ test('parseModelRows reads per-period columns and tolerates junk', () => {
 test('shortModel drops the claude- prefix and date suffix', () => {
   expect(shortModel('claude-sonnet-5-5')).toBe('sonnet-5-5')
   expect(shortModel('claude-haiku-4-5-20251001')).toBe('haiku-4-5')
+})
+
+test('buildSql prices Jev tokens at the given rates when cost_usd is null', () => {
+  const sql = buildSql('s', boundaries(new Date('2026-10-07T15:30:00')), { input: 4.2e-8, output: 1e-7 })
+  expect(sql.includes('COALESCE(cost_usd, COALESCE(input_tokens,0)*4.2e-8+COALESCE(output_tokens,0)*1e-7)')).toBe(true)
+})
+
+test('parseRates accepts "in out" and rejects junk', () => {
+  expect(parseRates('4.2e-08 0\n')).toEqual({ input: 4.2e-8, output: 0 })
+  expect(parseRates('usage: nope')).toBe(null)
+  expect(parseRates('-1 0')).toBe(null)
+})
+
+test('fmtUsd keeps precision for tiny amounts', () => {
+  expect(fmtUsd(0.00042)).toBe('$0.0004')
+  expect(fmtUsd(1.2345)).toBe('$1.235')
 })
