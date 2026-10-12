@@ -145,6 +145,24 @@ class TestScrape(unittest.TestCase):
         self.assertEqual(c.execute("SELECT model FROM compaction").fetchall(), [("claude-haiku-5-5",)])
         c.close()
 
+    def test_later_requests_are_credited_to_their_own_model(self):
+        ev = sysrec("Bash output 50% smaller (1000 -> 500 chars); 1/2 chunks omitted",
+                    ts="2026-10-07T15:00:00.000Z")
+        self.write("a/1.jsonl", [
+            asstrec("req_0", "2026-10-07T14:59:00.000Z", "claude-opus-5-5"),   # before the trim: not credited
+            ev,
+            asstrec("req_1", "2026-10-07T15:01:00.000Z", "claude-opus-5-5"),
+            asstrec("req_1", "2026-10-07T15:01:01.000Z", "claude-opus-5-5"),   # streamed lines of one request
+            asstrec("req_2", "2026-10-07T15:02:00.000Z", "claude-haiku-5-5"),  # after a /model switch
+            asstrec("req_3", "2026-10-07T15:03:00.000Z", "claude-haiku-5-5"),
+        ])
+        cs.scrape(self.proj)
+        cs.scrape(self.proj)  # rescrape keeps the same counts
+        c = sqlite3.connect(str(metrics.db_path()))
+        self.assertEqual(c.execute("SELECT model, requests FROM compaction_req ORDER BY model").fetchall(),
+                         [("claude-haiku-5-5", 2), ("claude-opus-5-5", 1)])
+        c.close()
+
     def test_ensure_schema_migrates_old_table(self):
         conn = sqlite3.connect(str(metrics.db_path()))
         conn.execute("CREATE TABLE compaction (id INTEGER PRIMARY KEY, ts TEXT NOT NULL,"
