@@ -549,6 +549,15 @@ if [ "$WANT_GUARD" = "1" ]; then
     ok "current -> $REPO_ROOT"
   fi
 
+  # The `jev-kit` front door: a symlink to the release's shim, so it follows
+  # `current` across deploys and rollbacks. Skipped when the release has none.
+  if [ -x "$AIRLOCK_HOME/current/bin/jev-kit" ]; then
+    mkdir -p "$HOME/.local/bin"
+    ln -sfn "$AIRLOCK_HOME/current/bin/jev-kit" "$HOME/.local/bin/jev-kit"
+    ok "jev-kit command: $HOME/.local/bin/jev-kit (run: jev-kit status)"
+    case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) warn "  $HOME/.local/bin is not on PATH" ;; esac
+  fi
+
   HOOK="$AIRLOCK_HOME/current/hooks/airlock.py"
   SESSION_CHECK_HOOK="$AIRLOCK_HOME/current/hooks/airlock_session_check.py"
   BROWSE_UNLOCK_HOOK="$AIRLOCK_HOME/current/hooks/airlock_browse_unlock.py"
