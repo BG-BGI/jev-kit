@@ -110,6 +110,13 @@ that lets `R11-browse-via-jev` stand aside when the kit's own `browse` tool
 has given up. Without it, a session whose `browse` call fails has no browser
 at all. The same re-run of the wire step adds it to an older install.
 
+The **`decide` tool** is registered with Claude Code for your user by
+`install/install.sh` (`--decide-mcp`, on by default) through
+`claude mcp add --scope user jev-decide`. It uses the same TypeSafe key. The
+rule for when Claude should call it comes with the server, so there is no
+`CLAUDE.md` to edit. Check it with `install/doctor.sh`; undo it with
+`claude mcp remove --scope user jev-decide`.
+
 The **`browse` tool needs no second key**. Jev decides every step and that
 needs the TypeSafe key; writing text into a field needs a model too, and with
 nothing configured that is a warm Haiku through your ordinary `claude` login,

@@ -194,6 +194,17 @@ class TestProtocol(unittest.TestCase):
         payload = json.loads(responses[2]["result"]["content"][0]["text"])
         self.assertTrue(payload["decisions"]["decision"]["answer"])
 
+    def test_initialize_carries_the_trigger_rule(self):
+        """The rule for WHEN to call the tool ships with the server, so no
+        one has to edit a CLAUDE.md. Pin the clauses that were measured."""
+        (resp,) = self._serve({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+        text = resp["result"]["instructions"]
+        self.assertEqual(text, server.INSTRUCTIONS)
+        for clause in ("MUST call mcp__jev-decide__decide FIRST", "10+ items",
+                       "pasted or inline list", "ToolSearch select:mcp__jev-decide__decide",
+                       "plan mode", "fewer than 10 items", "Never use it to write"):
+            self.assertIn(clause, text)
+
     def test_errors_are_tool_errors_not_crashes(self):
         responses = self._serve(
             {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
