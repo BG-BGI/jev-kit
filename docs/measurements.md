@@ -436,6 +436,45 @@ in Claude's context the direction reverses: a Haiku session answered a small
 pick itself for $0.027 in one turn, where calling the tool cost the same in
 three. That is why the guidance names files, not decisions in general.
 
+### The `decide` trigger rule
+
+2026-10-14, Sonnet 5.5 through `claude -p`, one to three trials per cell,
+synthetic inputs with known answers. The question was when Claude calls the
+tool, not how well Jev answers.
+
+| rule wording (in `CLAUDE.md`) | tasks that should call `decide` | called it |
+|---|---|---|
+| none, tool description only | 4 | 1 |
+| "use it only when ..., skip when obvious" | 4 | 1 |
+| "MUST call it first for ..." (Sonnet) | 4 | 3 |
+| the same (Haiku) | 4 | 4 |
+
+The shipped rule is the last wording, and it travels in the server's
+`initialize` instructions. With no `CLAUDE.md`, no hooks and only that server:
+
+| task | called `decide` | answer |
+|---|---|---|
+| 600-line log, 600 labels | yes | exact |
+| 240 tickets in a JSONL file | yes | exact |
+| 24 pasted review comments, twice | yes, 3 calls each | 24/24 and 24/24 |
+| the same 24, in plan mode | no attempt, reasoned by hand | 24/24 |
+| 5 tickets, `17*3`, 5 options to rank, 5 pasted comments | no | right |
+| 60-line log | yes | exact (a borderline call) |
+
+Plan mode blocks MCP calls ("Cannot call ... while in plan mode"). Before the
+fallback line, Sonnet tried twice and then reasoned the list out. In
+a full 110-tool session the schema is deferred, and Sonnet loaded it through
+`ToolSearch` first (two runs, with the same rule in `CLAUDE.md`, not yet with
+the server instructions). Jev missed one valid comment ("float math with
+no rounding for currency") in three earlier runs: it is a calibrated bulk
+filter, not an oracle.
+
+On eight real prompts replayed from one maintainer's history, none called the
+tool, correctly: none was a bulk judgement. Of 538 first prompts, a keyword
+scan found four that looked like one, and none was. Expect a few calls a month
+on ordinary coding work. Not tested: the server instructions in a session
+where the tool is deferred, and on Windows.
+
 ## Known limits
 
 - **The bench found no denies.** The guard's measured value so far is that it

@@ -88,11 +88,34 @@ characters and each item at 500. Nothing Claude did not put in
 the call. Each call is a local row in `~/.local/state/airlock/decide.jsonl`:
 the decision names, the answers, latency and Jev cost.
 
+## Install
+
+`install/install.sh` registers it by default (`--decide-mcp`). By hand:
+
+```bash
+decide/install.sh            # handshake check, then claude mcp add --scope user
+decide/install.sh --print-only
+```
+
+Undo it with `claude mcp remove --scope user jev-decide`.
+
+## When Claude calls it
+
+The server sends `instructions` on `initialize`, and Claude Code puts them in
+the system prompt while the server is connected. They say to call `decide`
+first for 10 or more items to label, a pasted list to judge item by item, or a
+large file, and to skip it for small inputs. They also say to load the schema
+with `ToolSearch` when the tool is deferred, and to reason it out when plan
+mode blocks the tool. Nobody needs to edit a `CLAUDE.md`. The text is
+`INSTRUCTIONS` in `server.py`, and a test pins its key clauses. Measured in
+[measurements](../docs/measurements.md#the-decide-trigger-rule).
+
 ## Limits
 
 - Up to 20 decisions a call, 255 options per choice, 10 levels per score.
 - Jev reads about 32k tokens of state. A context past that is cut, and a
   decision about the part that was cut is a guess.
-- The tool is only as useful as Claude's willingness to call it. Nothing makes
-  Claude reach for it; its description says when to. Whether it saves Claude
-  spend in practice is not measured yet.
+- The tool is only as useful as Claude's willingness to call it. The server
+  sends a trigger rule with `initialize` (see below). It makes Claude call the
+  tool on large inputs, but your real work may rarely have any: in one
+  maintainer's history, a few calls a month.

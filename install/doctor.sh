@@ -571,6 +571,32 @@ else
   skip "shim: not present in the live copy"
 fi
 
+# decide: a real MCP handshake. The server must send its instructions (the
+# rule for when Claude calls it), and Claude Code should have it registered.
+# No Jev call is made. Unregistered is a skip, not a failure: it is optional.
+DECIDE_SERVER="$LIVE/decide/server.py"
+if [ ! -f "$DECIDE_SERVER" ]; then
+  skip "decide: not present in the live copy"
+else
+  DECIDE_OUT="$(printf '%s\n' \
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"doctor","version":"0"}}}' \
+    '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+    '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+    | python3 "$DECIDE_SERVER" 2>/dev/null)"
+  if printf '%s' "$DECIDE_OUT" | grep -q '"name": "decide"' \
+     && printf '%s' "$DECIDE_OUT" | grep -q '"instructions"'; then
+    pass "decide: handshake ok, tool listed, trigger rule sent as instructions"
+    if ! command -v claude >/dev/null 2>&1; then
+      skip "decide: 'claude' not on PATH, so registration was not checked"
+    elif claude mcp get jev-decide >/dev/null 2>&1; then
+      pass "decide: registered with Claude Code (claude mcp get jev-decide)"
+    else
+      skip "decide: not registered; run decide/install.sh"
+    fi
+  else
+    fail "decide: the server did not answer the handshake with instructions: python3 $DECIDE_SERVER"
+  fi
+fi
 if [ -x "$HOME/bin/claude-auto-update" ]; then
   if airlock_is_macos; then
     if line="$("$PY" "$REPO_ROOT/install/launchd.py" status claude-auto-update 2>/dev/null)"; then

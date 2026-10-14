@@ -41,6 +41,29 @@ if REPO_ROOT not in sys.path:
 
 SERVER_NAME = "jev-decide"
 SERVER_VERSION = "0.1.0"
+
+# Sent on `initialize`: Claude Code puts it in the system prompt whenever this
+# server is connected, so the rule for WHEN to call the tool travels with the
+# tool and needs no edit to anyone's CLAUDE.md. Measured in
+# docs/measurements.md (the decide trigger rule).
+INSTRUCTIONS = (
+    "Jev decides; you write. You MUST call mcp__jev-decide__decide FIRST, before reading or "
+    "reasoning, when a task is: labelling or classifying 10+ items or lines, a yes/no or score "
+    "check across a long document, or choosing/ranking among named candidates over a file you "
+    "have not read. For files pass the path (context_file / items_file) instead of reading the "
+    "file yourself. Do not grep or script your own labelling instead.\n"
+    "A pasted or inline list of 10+ items (review comments, issues, tickets, log lines) you are "
+    "asked to judge one by one counts too: pass the pasted text as `context` and one decisions[] "
+    "entry per item (yes/no or choice) instead of reasoning through each item yourself.\n"
+    "If this tool's schema is not loaded, load it first with ToolSearch select:"
+    "mcp__jev-decide__decide, then call it. Never skip it because it is deferred.\n"
+    "In plan mode the tool is blocked (\"Cannot call ... while in plan mode\"). Do not retry it: "
+    "reason the decisions out yourself and say in the reply that Jev was unavailable in plan mode.\n"
+    "Skip it for fewer than 10 items, a file under ~100 lines, arithmetic, one-line facts, or "
+    "anything with a single safe default; small picks cost more with Jev than reasoning inline.\n"
+    "Act on an answer marked `confident`; treat one that is not as a hint. Never use it to write "
+    "text or code, or for a decision whose answers you cannot list."
+)
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 MODEL = "jev-latest"
 PRICE_PER_MTOK_USD = 0.042
@@ -400,7 +423,8 @@ def handle(msg, ask=None):
         return _result(msg_id, {
             "protocolVersion": wanted if wanted in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0],
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION}})
+            "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
+            "instructions": INSTRUCTIONS})
     if method == "ping":
         return _result(msg_id, {})
     if method == "tools/list":
