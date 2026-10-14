@@ -82,6 +82,19 @@ note and the output is compacted as before.
 | `recallMaxMB` | `50` | Oldest refs are deleted past this size. |
 | `recallMaxChars` | `20000` | Most characters one recall call returns. |
 
+### Refs after /compact or a resume
+
+The omission note that names a ref lives only in the context window, so
+`/compact` or a resume erases the pointer while the text stays on disk. A
+`SessionStart` hook, `hooks/airlock_recall_resurface.py`, fixes that. On
+`compact` and `resume` only, it adds a short block listing the refs stored in
+the last 12 hours (at most 8): ref, tool, line range, age and a redacted
+70-character preview, plus how to fetch one. `jev-kit compaction install --yes`
+wires it, and `jev-kit compaction remove --yes` takes it out. The store does
+not record which Claude session wrote a row, so the list is recent refs on this
+machine; two sessions running at once can see each other's. `python3 -m
+airlock.recall recent` prints the same list.
+
 Manage the store by hand with `python3 -m airlock.recall list`, `show REF`,
 `prune` and `purge`. `purge` deletes everything. The model is not told to touch
 the database, and `R12-self-tamper` still blocks a Bash call that tries.

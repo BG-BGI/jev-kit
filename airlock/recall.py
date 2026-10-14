@@ -15,6 +15,7 @@ error, so a broken store never blocks or slows a tool call.
     python3 -m airlock.recall put   < {"session","tool","ranges":[{"start","end","text"}]}
     python3 -m airlock.recall get   REF [--range A-B] [--max-chars N]
     python3 -m airlock.recall list | show REF | prune | purge
+    python3 -m airlock.recall recent [--hours N] [--limit N]
 """
 import argparse
 import datetime
@@ -30,6 +31,9 @@ BUSY_TIMEOUT_MS = 200
 DEFAULT_TTL_DAYS = 7
 DEFAULT_MAX_MB = 50
 DEFAULT_MAX_CHARS = 20000
+RECENT_HOURS = 12
+RECENT_LIMIT = 8
+PREVIEW_CHARS = 70
 MAX_PUT_BYTES = 8 * 1024 * 1024
 
 SCHEMA = """
@@ -189,6 +193,43 @@ def _list(conn):
     ).fetchall()
 
 
+def recent(hours=RECENT_HOURS, limit=RECENT_LIMIT, ttl_days=DEFAULT_TTL_DAYS, now=None):
+    """Refs stored in the last `hours`, newest first, one dict per ref.
+
+    Used to tell a model which refs exist after /compact or a resume wiped the
+    omission notes that named them. The store does not record WHICH Claude
+    session wrote a row, so this is recency on this machine, not "this
+    session's refs". `preview` is the first non-blank line, redacted and cut.
+    Fails open: any error is an empty list.
+    """
+    try:
+        from airlock import redact
+        now = now or _now()
+        horizon = min(hours / 24.0, ttl_days)
+        cutoff = (now - datetime.timedelta(days=horizon)).isoformat()
+        conn = _connect()
+        try:
+            rows = conn.execute(
+                "SELECT ref, tool, MIN(range_start), MAX(range_end), SUM(size), MIN(created_at) "
+                "FROM recall WHERE created_at >= ? GROUP BY ref "
+                "ORDER BY MIN(created_at) DESC LIMIT ?", (cutoff, int(limit))).fetchall()
+            out = []
+            for ref, tool, lo, hi, size, ts in rows:
+                (text,) = conn.execute(
+                    "SELECT text FROM recall WHERE ref = ? ORDER BY range_start LIMIT 1", (ref,)).fetchone()
+                lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+                first = next((ln for ln in lines if sum(c.isalnum() for c in ln) >= 8),
+                             lines[0] if lines else "")
+                age = max(0, int((now - datetime.datetime.fromisoformat(ts)).total_seconds() // 60))
+                out.append({"ref": ref, "tool": tool, "start": lo, "end": hi, "size": size,
+                            "age_min": age, "preview": redact.redact(first)[:PREVIEW_CHARS]})
+            return out
+        finally:
+            conn.close()
+    except Exception:
+        return []
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="airlock.recall")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -201,6 +242,9 @@ def main(argv=None):
     sg.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS)
     sg.add_argument("--ttl-days", type=float, default=DEFAULT_TTL_DAYS)
     sub.add_parser("list")
+    sr = sub.add_parser("recent")
+    sr.add_argument("--hours", type=float, default=RECENT_HOURS)
+    sr.add_argument("--limit", type=int, default=RECENT_LIMIT)
     ss = sub.add_parser("show")
     ss.add_argument("ref")
     sub.add_parser("prune")
@@ -215,6 +259,8 @@ def main(argv=None):
         print(json.dumps(put(payload, a.ttl_days, a.max_mb)))
     elif a.cmd == "get":
         print(json.dumps(get(a.ref, a.range, a.max_chars, a.ttl_days)))
+    elif a.cmd == "recent":
+        print(json.dumps(recent(a.hours, a.limit)))
     else:
         conn = _connect(timeout_ms=2000)
         try:

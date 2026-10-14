@@ -12,11 +12,18 @@ import shutil
 import subprocess
 import types
 
+from airlock import paths
+
 from . import common
 
 PLUGIN_ID = "fast-jev-compaction@fast-jev-compaction"
 MARKETPLACE = "fast-jev-compaction"
 ALLOW_ENTRY = "mcp__fast-jev-compaction__recall"
+# SessionStart hook that lists stored recall refs after /compact or a resume,
+# when the omission notes that named them are gone from context.
+RESURFACE_HOOK = "airlock_recall_resurface.py"
+RESURFACE_MATCHER = "compact|resume"
+RESURFACE_TIMEOUT = 5
 HOOKS_FLAG = "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS"
 MODES = ("tool", "session", "both")
 EGRESS = (
@@ -112,12 +119,30 @@ def _options(data):
     return ((data.get("pluginConfigs") or {}).get(PLUGIN_ID) or {}).get("options") or {}
 
 
+def resurface_command():
+    """The deployed release's copy when there is one (it survives checkout
+    moves and updates atomically), else this checkout's."""
+    live = os.path.join(str(paths.install_home()), "current", "hooks", RESURFACE_HOOK)
+    script = live if os.path.isfile(live) else os.path.join(repo_root(), "hooks", RESURFACE_HOOK)
+    return "python3 %s" % script
+
+
+def _resurface_entries(data):
+    return [h for block in ((data.get("hooks") or {}).get("SessionStart") or [])
+            for h in (block.get("hooks") or []) if RESURFACE_HOOK in (h.get("command") or "")]
+
+
 def ensure_settings(data):
-    """Function hooks flag and the recall tool permission, added if missing."""
+    """Function hooks flag, the recall tool permission and the ref-resurface
+    SessionStart hook, each added if missing."""
     data.setdefault("env", {})[HOOKS_FLAG] = "1"
     allow = data.setdefault("permissions", {}).setdefault("allow", [])
     if ALLOW_ENTRY not in allow:
         allow.append(ALLOW_ENTRY)
+    if not _resurface_entries(data):
+        data.setdefault("hooks", {}).setdefault("SessionStart", []).append({
+            "matcher": RESURFACE_MATCHER,
+            "hooks": [{"type": "command", "command": resurface_command(), "timeout": RESURFACE_TIMEOUT}]})
     return data
 
 
@@ -172,6 +197,7 @@ def cmd_status(args, out, err):
     out.write("installed   %s%s\n" % (inst or "no", "" if not inst or inst == pin.get("commit", "")[:12] else "  (behind the pin: jev-kit compaction update)"))
     data = _load(settings_path(args.settings_file))
     out.write("hooks flag  %s\n" % ("set" if (data.get("env") or {}).get(HOOKS_FLAG) == "1" else "missing"))
+    out.write("resurface   %s\n" % ("wired" if _resurface_entries(_load(settings_path(args.settings_file))) else "not wired"))
     out.write("recall perm %s\n" % ("allowed" if ALLOW_ENTRY in ((data.get("permissions") or {}).get("allow") or []) else "not allowed"))
     return cmd_get(types.SimpleNamespace(key=None, settings_file=args.settings_file), out, err)
 
@@ -186,7 +212,8 @@ def cmd_install(args, out, err, runner=subprocess.call):
     out.write(EGRESS + "\n")
     out.write("pin         %s\n" % pin["commit"][:12])
     out.write("mode        %s\n" % mode)
-    out.write("settings    %s: set %s=1 and allow %s\n" % (path, HOOKS_FLAG, ALLOW_ENTRY))
+    out.write("settings    %s: set %s=1, allow %s, and list stored refs after /compact or a resume (SessionStart hook)\n"
+              % (path, HOOKS_FLAG, ALLOW_ENTRY))
     out.write("run        compaction/install.sh (clone the pin, add the marketplace, install the plugin)\n")
     if not args.yes:
         out.write("dry run: nothing changed. Add --yes to apply.\n")
@@ -240,11 +267,25 @@ def cmd_update(args, out, err, runner=subprocess.call):
     return 0
 
 
+def _drop_resurface(data):
+    """Remove the resurface hook, and any SessionStart block or key it empties."""
+    session = (data.get("hooks") or {}).get("SessionStart")
+    if not session:
+        return
+    for block in session:
+        block["hooks"] = [h for h in (block.get("hooks") or []) if RESURFACE_HOOK not in (h.get("command") or "")]
+    data["hooks"]["SessionStart"] = [b for b in session if b.get("hooks")]
+    if not data["hooks"]["SessionStart"]:
+        del data["hooks"]["SessionStart"]
+    if not data["hooks"]:
+        del data["hooks"]
+
+
 def cmd_remove(args, out, err, runner=subprocess.call):
     path = settings_path(args.settings_file)
     out.write("run        claude plugin uninstall %s\n" % PLUGIN_ID)
     out.write("run        claude plugin marketplace remove %s\n" % MARKETPLACE)
-    out.write("settings    %s: drop pluginConfigs for the plugin and the recall permission\n" % path)
+    out.write("settings    %s: drop pluginConfigs for the plugin, the recall permission and the ref-resurface hook\n" % path)
     out.write("kept        env %s (other mods may use function hooks)\n" % HOOKS_FLAG)
     if args.purge:
         out.write("remove     %s (all downloaded releases)\n" % os.path.join(compaction_home(), "releases"))
@@ -261,6 +302,7 @@ def cmd_remove(args, out, err, runner=subprocess.call):
     allow = (data.get("permissions") or {}).get("allow")
     if allow and ALLOW_ENTRY in allow:
         allow.remove(ALLOW_ENTRY)
+    _drop_resurface(data)
     common.write_text(path, _dump(data), True, out)
     if args.purge:
         shutil.rmtree(os.path.join(compaction_home(), "releases"), ignore_errors=True)

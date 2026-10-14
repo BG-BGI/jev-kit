@@ -133,5 +133,41 @@ class TestCli(RecallCase):
         self.assertEqual(recall.db_path(), paths.state_dir() / "recall.db")
 
 
+class TestRecent(RecallCase):
+    NOW = datetime.datetime(2026, 10, 14, 12, 0, tzinfo=datetime.timezone.utc)
+
+    def _put(self, text, minutes_ago, **kw):
+        when = self.NOW - datetime.timedelta(minutes=minutes_ago)
+        return recall.put(payload(text, **kw), now=when)["ref"]
+
+    def test_newest_first_with_age_and_range(self):
+        old = self._put("older line here", 90)
+        new = self._put("newer line here\nsecond", 5, start=40)
+        got = recall.recent(now=self.NOW)
+        self.assertEqual([r["ref"] for r in got], [new, old])
+        self.assertEqual((got[0]["start"], got[0]["end"], got[0]["age_min"]), (40, 41, 5))
+        self.assertEqual(got[1]["age_min"], 90)
+
+    def test_horizon_and_limit(self):
+        for i in range(5):
+            self._put("line number %d here" % i, 10 + i)
+        stale = self._put("stale line content", 60 * 20)
+        refs = [r["ref"] for r in recall.recent(hours=12, limit=3, now=self.NOW)]
+        self.assertEqual(len(refs), 3)
+        self.assertNotIn(stale, [r["ref"] for r in recall.recent(hours=12, limit=50, now=self.NOW)])
+
+    def test_preview_skips_trivia_and_is_redacted_and_cut(self):
+        self._put("41:\n\nexport TYPESAFE_API_KEY=apikey_abcdef1234567890abcdef " + "x" * 200, 1)
+        (r,) = recall.recent(now=self.NOW)
+        self.assertNotIn("apikey_abcdef1234567890abcdef", r["preview"])
+        self.assertLessEqual(len(r["preview"]), recall.PREVIEW_CHARS)
+        self.assertTrue(r["preview"].startswith("export"))
+
+    def test_empty_store_and_errors_fail_open(self):
+        self.assertEqual(recall.recent(now=self.NOW), [])
+        with mock.patch.object(recall, "_connect", side_effect=sqlite3.Error("boom")):
+            self.assertEqual(recall.recent(now=self.NOW), [])
+
+
 if __name__ == "__main__":
     unittest.main()
