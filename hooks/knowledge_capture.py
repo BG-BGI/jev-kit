@@ -404,8 +404,52 @@ def on_success(payload, ingest=None):
     return results or None
 
 
+def drain_danger(ingest=None):
+    """Turn the rows Airlock spooled at deny, ask and warn time into danger candidates."""
+    from knowledge import danger, types
+    rows = danger.drain()
+    if not rows:
+        return []
+    if ingest is None:
+        from knowledge import ingest as ingest_mod
+        ingest = ingest_mod.ingest
+    keys = [danger.dedup_key(r) for r in rows]
+
+    def txn(data):
+        now = time.time()
+        fresh = []
+        for row, key in zip(rows, keys):
+            e = _entry(data, row.get("session_id") or "")
+            if key in e["danger"]:
+                continue
+            e["danger"][key] = now
+            fresh.append(row)
+        return fresh
+
+    fresh = _with_state(txn) or []
+    results = []
+    for row in fresh:
+        text = "Airlock %s on %s: %s" % (row.get("action"), row.get("tool") or "a tool",
+                                         row.get("reason", ""))
+        if row.get("summary"):
+            text += " | call: %s" % row["summary"]
+        cand = _candidate(types.Candidate, "danger", text, row.get("tool", ""), None, "",
+                          entities_for(row.get("tool", ""), {"command": row.get("summary", "")}),
+                          _scopes(row.get("cwd") or None)[0], row.get("session_id", ""),
+                          "airlock %s %s" % (row.get("action"), row.get("rule") or ""))
+        try:
+            results.append(ingest(cand))
+        except Exception:
+            pass
+    return results
+
+
 def handle(payload):
     """Dispatch on the event. Returns the lines to print (possibly [])."""
+    try:
+        drain_danger()
+    except Exception:
+        pass
     event = str(payload.get("hook_event_name") or "")
     if event == "PostToolUse" or (not event and "error" not in payload and "tool_response" in payload):
         on_success(payload)

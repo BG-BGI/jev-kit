@@ -114,6 +114,11 @@ def main():
         if not config.enabled():
             return 0
         _arm_watchdog(BUDGET_S)
+        try:
+            from knowledge import danger
+            danger.mark_active()
+        except Exception:
+            pass
         scopes = store.scopes_for(payload.get("cwd") or os.getcwd())
         cons = list(store.constraints())
         # Ask for extra: constraints can sit in the ranking and are filtered out of it.
