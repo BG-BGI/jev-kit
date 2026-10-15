@@ -475,6 +475,26 @@ scan found four that looked like one, and none was. Expect a few calls a month
 on ordinary coding work. Not tested: the server instructions in a session
 where the tool is deferred, and on Windows.
 
+## Experience graph
+
+Not measured yet, on purpose. The component is new and **no numbers are
+claimed here**. Every call it makes, drops included, is a row in `metrics.db`
+with kind `knowledge`, so these figures will accrue from real use. Each gets
+filled in with its method and sample size only once there is a sample.
+
+| number | what it will say | source |
+|---|---|---|
+| gate calls per session | what the gate costs in requests | `metrics.db`, kind `knowledge` |
+| drop rate | how much the gate throws away, and the share lost to the timeout or the confidence bar | same |
+| duplicate rate | how often a candidate was already known | same |
+| fix-recall hits | how often a repeated failure was answered from the store | same |
+| signature precision | whether two failures with one signature are really the same | `eval/knowledge/pairs.jsonl`, run by the signature test |
+
+The signature row is the only one with a harness today. The test prints
+precision and recall over the labelled pairs and requires precision of at
+least 0.95. That checks the grouping of failures. It does not say the graph
+helps a session.
+
 ## Known limits
 
 - **The bench found no denies.** The guard's measured value so far is that it

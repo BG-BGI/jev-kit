@@ -29,8 +29,8 @@ A distilled "do X when Y", only ever promoted from three or more supporting
 episodes, never written directly.
 
 **Constraint**:
-A standing rule the human stated explicitly, stored verbatim with
-provenance, never expiring, and exempt from the confidence gate; a detected
+A standing rule the human stated explicitly, stored with provenance and
+redacted only of token-like strings, never expiring, and exempt from the confidence gate; a detected
 correction only triggers an offer, never a write.
 _Avoid_: preference, rule (reserved for Airlock's rules table)
 

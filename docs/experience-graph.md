@@ -1,8 +1,10 @@
-# Experience graph (RFC, no code yet)
+# Experience graph (RFC)
 
-**Status: proposal.** Nothing in this document is built. It exists so the
-schema and the gating can be argued about before a line of code, the same way
-the rules table was.
+**Status: building.** The code is landing in `knowledge/`, opt in with
+`--knowledge`. See [knowledge/README.md](../knowledge/README.md) for what exists
+now. This document is still the design of record: the schema and the gating
+were argued here first, the same way the rules table was. Nothing is measured
+yet, see [measurements](measurements.md#experience-graph).
 
 The kit already has a knowledge graph: `graphify-out/` maps what the code
 *is*. This one maps what *happened* while working on it: which errors had
@@ -32,7 +34,7 @@ Eight knowledge buckets, plus entity anchors.
 | `failure` | An error signature with enough context to match again. | Second tool failure inside 15 minutes. The failure-verdict hook already fires there. |
 | `fix` | What resolved a failure. Always carries a `fixes` edge. | A check flipping red to green after a recorded failure. |
 | `pattern` | A distilled "do X when Y". Never written directly, only promoted. | Three or more similar `fix` or episode nodes. |
-| `danger` | A near-miss: a denied call, a destructive action caught. | An Airlock deny or warn, or a Belay bounce. |
+| `danger` | A near-miss: a denied call, a destructive action caught. | An Airlock deny or warn, or a Belay bounce. **Weak in the first build:** a denied `PreToolUse` call fires neither capture hook, so only text that reaches a failure or a result is seen. A `PreToolUse` writer is the missing piece. |
 | `decision` | A choice, its rationale, and the rejected alternatives. | Harvested at a Stop hook or a PR merge. |
 | `constraint` | A hard standing rule from the human ("never push to upstream"). | Stated explicitly ("remember:", "from now on", a `/constraint` command). A correction shape in a prompt only triggers an offer, never a write. |
 | `doc` | An external reference that answered something, plus what it answered. | A fetch followed by the task resolving. |
@@ -114,8 +116,10 @@ that it has the strictest capture of any bucket. A false constraint is a
 permanent standing order, so in v1 only the explicit path writes:
 
 - **Explicit:** the human says "remember:", "standing rule:", "from now on",
-  or invokes `/constraint`. Stored verbatim, no Jev call, with provenance
-  (session id and the prompt line it came from).
+  or calls `graph_log` with bucket `constraint`. A `/constraint` slash
+  command is not built yet. Stored with no Jev call, redacted first so a
+  token pasted into the rule never lands on disk, with provenance (session id
+  and the prompt line it came from).
 - **Implicit:** a local heuristic spots a correction shape ("don't", "never",
   "always"). It stores nothing. It may offer once, "want this as a standing
   rule?", and a yes routes through the explicit path. Zero false constraints,

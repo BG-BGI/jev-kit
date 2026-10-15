@@ -77,6 +77,14 @@ Components (default: --guard --session-check --daemon --monitoring
                  says whether to change approach, look first or ask. Opt in:
                  failed calls' error heads, redacted, go to TypeSafe. Implies
                  --guard; wired only with --wire
+  --knowledge    the experience graph (experimental): three hooks (capture,
+                 SessionStart, UserPromptSubmit) and the 'jev-knowledge' MCP
+                 server (through claude mcp add --scope user; idempotent).
+                 Opt in: a candidate worth storing, redacted, goes to
+                 TypeSafe for one gate call. Implies --guard; the hooks are
+                 wired only with --wire. Switch it off without uninstalling:
+                 write "off" to ~/.config/airlock/knowledge. Undo the server:
+                 claude mcp remove --scope user jev-knowledge
   --compaction   BG-BGI/fast-jev-compaction -- reads compaction/README.md
                  first: it sends far more off the machine than anything else
                  here (COMPACTION_MODE=tool|session|both, default tool)
@@ -112,6 +120,7 @@ WANT_BROWSE_MCP=0
 WANT_DECIDE_MCP=0
 WANT_SKILL_SUGGEST=0
 WANT_FAILURE_VERDICT=0
+WANT_KNOWLEDGE=0
 # The session check rides with the guard: it is part of the DEFAULT set on
 # every platform and is not one of the flags that makes the default set go
 # away, because a guard installed without it is a guard whose death is silent.
@@ -147,6 +156,8 @@ while [ "$#" -gt 0 ]; do
     # step, so asking for it asks for the guard too.
     --skill-suggest) WANT_SKILL_SUGGEST=1; WANT_GUARD=1; ANY_COMPONENT=1; shift ;;
     --failure-verdict) WANT_FAILURE_VERDICT=1; WANT_GUARD=1; ANY_COMPONENT=1; shift ;;
+    # Same shape as the failure verdict: the hooks ship in the guard's release.
+    --knowledge) WANT_KNOWLEDGE=1; WANT_GUARD=1; ANY_COMPONENT=1; shift ;;
     --session-check) WANT_SESSION_CHECK=1; shift ;;
     --no-session-check) WANT_SESSION_CHECK=0; shift ;;
     --all)
@@ -154,6 +165,7 @@ while [ "$#" -gt 0 ]; do
       WANT_FILESEARCH=1; WANT_BROWSER=1; WANT_REVIEW=1; WANT_SHIM=1
       WANT_CLAUDE_UPDATE=1; WANT_BELAY=1; WANT_COMPACTION=1
       WANT_BROWSE_MCP=1; WANT_DECIDE_MCP=1; WANT_SKILL_SUGGEST=1; WANT_FAILURE_VERDICT=1
+      WANT_KNOWLEDGE=1
       FILESEARCH_EXPLICIT=1; ANY_COMPONENT=1; shift ;;
     --headless) HEADLESS_CHOICE=yes; shift ;;
     --no-headless) HEADLESS_CHOICE=no; shift ;;
@@ -369,6 +381,7 @@ plan "$WANT_BELAY" "belay"
 plan "$WANT_COMPACTION" "compaction"
 plan "$WANT_SKILL_SUGGEST" "skill-suggest (UserPromptSubmit hook, wired only with --wire)"
 plan "$WANT_FAILURE_VERDICT" "failure-verdict (PostToolUseFailure hook, wired only with --wire)"
+plan "$WANT_KNOWLEDGE" "knowledge (3 hooks wired only with --wire; claude mcp add --scope user jev-knowledge)"
 echo "   AIRLOCK_HOME=$AIRLOCK_HOME"
 echo "   $SCHEDULER: $([ "$NO_SYSTEMD" = "1" ] && echo "no (timers and units skipped)" || echo yes)"
 
@@ -652,6 +665,7 @@ EOF
     [ "$WANT_BELAY" = "1" ] && WIRE_EXTRA_FLAGS+=("--belay")
     [ "$WANT_SKILL_SUGGEST" = "1" ] && WIRE_EXTRA_FLAGS+=("--skill-suggest")
     [ "$WANT_FAILURE_VERDICT" = "1" ] && WIRE_EXTRA_FLAGS+=("--failure-verdict")
+    [ "$WANT_KNOWLEDGE" = "1" ] && WIRE_EXTRA_FLAGS+=("--knowledge")
     [ "$WANT_SESSION_CHECK" = "1" ] || WIRE_EXTRA_FLAGS+=("--no-session-check")
     AIRLOCK_HOME="$AIRLOCK_HOME" JEV_HOME="$AIRLOCK_HOME" AIRLOCK_PYTHON3="$PY" \
       "$SCRIPT_DIR/wire.sh" --apply ${WIRE_EXTRA_FLAGS[@]+"${WIRE_EXTRA_FLAGS[@]}"} "${WIRE_FILES[@]}"
@@ -833,6 +847,12 @@ fi
 if [ "$WANT_DECIDE_MCP" = "1" ]; then
   step "Decide MCP server"
   "$REPO_ROOT/decide/install.sh" || warn "decide/install.sh reported a problem"
+fi
+
+# After --guard on purpose: it prefers the deployed release's copy of knowledge/.
+if [ "$WANT_KNOWLEDGE" = "1" ]; then
+  step "Knowledge MCP server"
+  "$REPO_ROOT/knowledge/install.sh" || warn "knowledge/install.sh reported a problem"
 fi
 
 if [ "$WANT_REVIEW" = "1" ]; then

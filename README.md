@@ -159,6 +159,7 @@ only: no labelled corpus, no measured numbers, no sustained use.
 | Browser agent | Jev decides each click, or a warm planner does with `plan: true`. Vendored at a pin | no, opt-in | Page state and goals, to the decider you configure | own numbers |
 | Review | A Jev code reviewer at a pin, with a fail-open wrapper | no, opt-in | Diffs, to the gate you configure | no numbers here |
 | `decide` MCP tool | Claude asks Jev for calibrated choice, score and yes/no decisions, many per call | yes, `--decide-mcp` | The context and questions Claude sends, redacted | **experimental** |
+| Experience graph | Remembers error fixes, decisions and your standing rules across sessions, and says so when a known failure comes back. Local store, one Jev gate call before anything is kept | no, `--knowledge` | A redacted candidate and its nearest neighbours, to TypeSafe | **experimental** |
 | Harness | Jev decides each step of a `make check-agent` fix loop; Claude only writes the edits | no | Failed gate output, redacted, to TypeSafe | **experimental** |
 | Document classifier | Two-stage classifier with an escape hatch and a confidence gate | no | Page text, when you call it | **experimental** |
 | Log triage | Redact-first, local-rules-first triage on stdin | no | Redacted lines, once local rules run out | **experimental** |
