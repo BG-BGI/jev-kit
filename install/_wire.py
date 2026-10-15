@@ -109,6 +109,21 @@ BROWSE_UNLOCK_TIMEOUT = 5
 SKILL_SUGGEST_TIMEOUT = 8
 # One Jev request of at most 2 s (hooks/airlock_failure_verdict.py TIMEOUT_S).
 FAILURE_VERDICT_TIMEOUT = 5
+# The knowledge graph is opt in as well: its gate sends a redacted candidate
+# to TypeSafe. Three hook files, four registrations: the capture hook runs
+# after a failed call AND after a successful one (a red-to-green flip is how
+# it learns a fix), the session hook injects at SessionStart, the prompt hook
+# runs on UserPromptSubmit.
+KNOWLEDGE = os.environ.get("KNOWLEDGE") == "1"
+# One gate call of at most 1.5 s (knowledge/config.py GATE_TIMEOUT_S) plus
+# start-up. Past this ceiling Claude Code drops the hook and the turn goes on.
+KNOWLEDGE_TIMEOUT = 5
+KNOWLEDGE_HOOKS = (
+    # (env prefix, label, events)
+    ("KNOWLEDGE_CAPTURE", "knowledge capture", ("PostToolUseFailure", "PostToolUse")),
+    ("KNOWLEDGE_SESSION", "knowledge session", ("SessionStart",)),
+    ("KNOWLEDGE_PROMPT", "knowledge prompt", ("UserPromptSubmit",)),
+)
 
 # Matches a JSON string value that is (or ends in) a path to airlock.py's
 # hook entry point -- e.g. "$HOME/code/airlock/hooks/airlock.py" or
@@ -279,6 +294,50 @@ def _failure_verdict_ok():
     return bool(FAILURE_VERDICT and FAILURE_VERDICT_HOOK and os.path.isfile(FAILURE_VERDICT_HOOK))
 
 
+def _knowledge_hook(prefix):
+    """(hook path, command) for one knowledge hook, from the environment."""
+    hook = os.environ.get(prefix + "_HOOK", "")
+    return hook, os.environ.get(prefix + "_COMMAND", hook)
+
+
+def _knowledge_registrations():
+    """Every (event, label, command) the knowledge flag would register, for
+    the hooks whose file is really there."""
+    out = []
+    if not KNOWLEDGE:
+        return out
+    for prefix, label, events in KNOWLEDGE_HOOKS:
+        hook, command = _knowledge_hook(prefix)
+        if hook and os.path.isfile(hook):
+            out.extend((event, label, command) for event in events)
+    return out
+
+
+def _knowledge_missing():
+    """Labels and paths of knowledge hooks that were asked for and are absent."""
+    if not KNOWLEDGE:
+        return []
+    return [(label, _knowledge_hook(prefix)[0] or "<unset>")
+            for prefix, label, _events in KNOWLEDGE_HOOKS
+            if not (_knowledge_hook(prefix)[0] and os.path.isfile(_knowledge_hook(prefix)[0]))]
+
+
+def _knowledge_block(command):
+    return {"matcher": "*", "hooks": [
+        {"type": "command", "command": command, "timeout": KNOWLEDGE_TIMEOUT}]}
+
+
+def _knowledge_to_add(data):
+    hooks = data.get("hooks") or {}
+    return [(event, label, command) for event, label, command in _knowledge_registrations()
+            if not _has_command(hooks.get(event) or [], command)]
+
+
+def _knowledge_missing_notes(prefix):
+    return ["%s--knowledge given but no %s hook at %s, skipping its entries" % (prefix, label, hook)
+            for label, hook in _knowledge_missing()]
+
+
 def _session_check_block():
     return {"matcher": "*", "hooks": [
         {"type": "command", "command": SESSION_CHECK_COMMAND,
@@ -371,6 +430,8 @@ def _fresh_settings():
         data["hooks"][SKILL_SUGGEST_EVENT] = [_skill_suggest_block()]
     if _failure_verdict_ok():
         data["hooks"].setdefault(FAILURE_VERDICT_EVENT, []).append(_failure_verdict_block())
+    for event, _label, command in _knowledge_registrations():
+        _append_hook(data, event, _knowledge_block(command), command)
     if FUNCTION_HOOKS:
         data["env"] = {FUNCTION_HOOKS_ENV_KEY: "1"}
     return data
@@ -417,6 +478,10 @@ def _describe_fresh():
         else:
             lines.append("  %s (failure verdict): SKIPPED, no hook at %s"
                          % (FAILURE_VERDICT_EVENT, FAILURE_VERDICT_HOOK or "<unset>"))
+    for event, label, command in _knowledge_registrations():
+        lines.append("  %s (%s): matcher \"*\", command \"%s\", timeout %d"
+                     % (event, label, command, KNOWLEDGE_TIMEOUT))
+    lines.extend(_knowledge_missing_notes("  "))
     if FUNCTION_HOOKS:
         lines.append("  env.%s = \"1\"" % FUNCTION_HOOKS_ENV_KEY)
     return lines
@@ -529,6 +594,8 @@ def process(path):
     verdict_entries = (data.get("hooks") or {}).get(FAILURE_VERDICT_EVENT) or []
     needs_failure_verdict = verdict_ok and not _has_command(verdict_entries, FAILURE_VERDICT_COMMAND)
 
+    knowledge_to_add = _knowledge_to_add(data)
+
     needs_function_hooks = FUNCTION_HOOKS and (data.get("env") or {}).get(FUNCTION_HOOKS_ENV_KEY) != "1"
 
     # The SessionStart session check. Two separate questions, deliberately:
@@ -563,7 +630,7 @@ def process(path):
     needs_repoint = needs_repoint or needs_repoint_session or needs_repoint_browse
     needs_add = (needs_add_pretooluse or needs_add_session or needs_add_browse
                  or needs_belay or needs_skill_suggest or needs_failure_verdict
-                 or needs_function_hooks)
+                 or bool(knowledge_to_add) or needs_function_hooks)
 
     if not (needs_repoint or needs_add):
         if matches:
@@ -585,6 +652,8 @@ def process(path):
         if verdict_missing_hook:
             print("%s: --failure-verdict given but no hook at %s, skipping %s entry"
                   % (path, FAILURE_VERDICT_HOOK or "<unset>", FAILURE_VERDICT_EVENT))
+        for note in _knowledge_missing_notes("%s: " % path):
+            print(note)
         return False
 
     # A pure repoint -- nothing to ADD -- keeps the byte-preserving text
@@ -672,6 +741,10 @@ def process(path):
             actions.append('added %s (failure verdict): matcher "*", command "%s", timeout %d'
                            % (FAILURE_VERDICT_EVENT, FAILURE_VERDICT_COMMAND,
                               FAILURE_VERDICT_TIMEOUT))
+    for event, label, command in knowledge_to_add:
+        if _append_hook(new_data, event, _knowledge_block(command), command):
+            actions.append('added %s (%s): matcher "*", command "%s", timeout %d'
+                           % (event, label, command, KNOWLEDGE_TIMEOUT))
     if needs_function_hooks:
         new_data.setdefault("env", {})[FUNCTION_HOOKS_ENV_KEY] = "1"
         actions.append('set env.%s = "1"' % FUNCTION_HOOKS_ENV_KEY)
@@ -702,6 +775,8 @@ def process(path):
         if verdict_missing_hook:
             print("  (--failure-verdict given but no hook at %s, skipping %s entry)"
                   % (FAILURE_VERDICT_HOOK or "<unset>", FAILURE_VERDICT_EVENT))
+        for note in _knowledge_missing_notes("  ("):
+            print(note + ")")
         return True
 
     backup = _backup(path)
@@ -725,6 +800,8 @@ def process(path):
     if verdict_missing_hook:
         print("  (--failure-verdict given but no hook at %s, skipping %s entry)"
               % (FAILURE_VERDICT_HOOK or "<unset>", FAILURE_VERDICT_EVENT))
+    for note in _knowledge_missing_notes("  ("):
+        print(note + ")")
     return True
 
 

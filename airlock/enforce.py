@@ -94,6 +94,19 @@ def budget_ms(windows=None):
         return default
 
 
+_CURRENT = {}
+
+
+def _spool_danger(action, text):
+    """Queue the verdict for the knowledge graph's `danger` bucket. One local
+    file append, after the verdict is already printed, and it never raises."""
+    try:
+        from knowledge import danger
+        danger.spool(action, text, _CURRENT.get("data"))
+    except Exception:
+        pass
+
+
 def emit_deny(reason):
     sys.stdout.write(json.dumps({
         "hookSpecificOutput": {
@@ -102,6 +115,7 @@ def emit_deny(reason):
             "permissionDecisionReason": reason,
         }
     }))
+    _spool_danger("deny", reason)
 
 
 def emit_ask(reason):
@@ -131,6 +145,7 @@ def emit_ask(reason):
             "permissionDecisionReason": reason,
         }
     }))
+    _spool_danger("ask", reason)
 
 
 def emit_warn(advice):
@@ -149,6 +164,7 @@ def emit_warn(advice):
             "additionalContext": text,
         },
     }))
+    _spool_danger("warn", text)
 
 
 def emit_rewrite(updated_input, text):
@@ -417,10 +433,13 @@ def handle(data, tool_name, mode="enforce"):
     Returns True if a deny was emitted to stdout, False otherwise. Never
     raises -- every branch is wrapped so a bug here can only ever fail open.
     """
+    _CURRENT["data"] = data
     try:
         return _handle(data, tool_name, mode)
     except Exception:
         return False
+    finally:
+        _CURRENT.clear()
 
 
 def _cost_cap_reason(v):
