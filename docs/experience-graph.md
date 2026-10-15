@@ -34,7 +34,7 @@ Eight knowledge buckets, plus entity anchors.
 | `pattern` | A distilled "do X when Y". Never written directly, only promoted. | Three or more similar `fix` or episode nodes. |
 | `danger` | A near-miss: a denied call, a destructive action caught. | An Airlock deny or warn, or a Belay bounce. |
 | `decision` | A choice, its rationale, and the rejected alternatives. | Harvested at a Stop hook or a PR merge. |
-| `constraint` | A hard standing rule from the human ("never push to upstream"). | A correction in a prompt. |
+| `constraint` | A hard standing rule from the human ("never push to upstream"). | Stated explicitly ("remember:", "from now on", a `/constraint` command). A correction shape in a prompt only triggers an offer, never a write. |
 | `doc` | An external reference that answered something, plus what it answered. | A fetch followed by the task resolving. |
 | `env` | A machine fact: versions, ports, a flaky service. | Repeated failures with an environment shape. |
 
@@ -58,8 +58,8 @@ flowchart LR
     A["Hook event"] --> B{"Local rules"}
     B -- no signal --> X["dropped, free"]
     B -- candidate --> C{"Jev gate<br/>one decide call"}
-    C -- below bar --> S["shadow log"]
-    C -- confident --> D["Claude writes node text"]
+    C -- below bar --> S["dropped, counted"]
+    C -- confident --> D["node written: templated episode,<br/>or prose via self-report"]
     D --> E["SQLite graph"]
 ```
 
@@ -69,9 +69,14 @@ prompt. No Jev call per tool use. The rules must reject roughly nine in ten
 events before anything leaves the machine; if they do not, the write
 amplification kills the component.
 
-**Stage 2, Jev classifies.** One call per candidate through the
-[decide server](../decide/README.md), redacted like every other payload, with
-five typed questions:
+**Stage 2, Jev classifies, inline.** The whole pipeline is hot path: there
+is no batch job, no nightly pass, nothing deferred. One call per candidate
+through the [decide server](../decide/README.md) over the warm daemon
+(about 0.3 s), at the hook, redacted like every other payload. A hard
+timeout, and on timeout or error the candidate is dropped, counted in
+`metrics.db`, and the turn is never blocked. The call carries the gate questions and the
+lifecycle questions together, because a batch over one context costs about
+what one question costs:
 
 1. `store`, yes/no: is this worth keeping at all?
 2. `bucket`, choice over the eight types.
@@ -81,41 +86,96 @@ five typed questions:
 5. `scope`, choice: this repo, this machine, or global.
 
 Answers act only at the kit's shared 0.8/0.4 bar. Below the bar the candidate
-goes to a shadow log, exactly how failure-verdict was rolled out, so the gate
-can be tuned on real traffic before it writes anything.
+is dropped and counted, so the drop rate is still a tunable number without a
+rehearsal mode.
 
-**Stage 3, Claude writes the text.** Jev never writes prose; that rule
-already ships in the decide server's instructions. Jev is the gate and the
-router. Claude is the author. The node text is written into the graph with
-the edges the novelty answer implies: `duplicate` becomes a touch on the
+**Stage 3, the node is written, still inline.** Jev never writes prose; that
+rule already ships in the decide server's instructions. Jev is the gate and
+the router. Authorship splits by birth:
+
+- A hook-born episode (`failure`, `fix`, `danger`, `env`) gets **templated
+  text from the captured fields**: the signature, the command, the outcome. A
+  hook cannot ask Claude for prose mid-call, and the template is more
+  greppable than prose anyway.
+- A self-reported node (`decision`, `doc`) is **authored by Claude** through
+  the graph's own MCP tool, `graph_log`, at the moment of deciding. The
+  trigger rule ships in the server's MCP instructions, the same way the
+  decide trigger rule does, so nothing edits a `CLAUDE.md`. Dead ends are the
+  point: abandon an approach, log why. There is no transcript mining; what
+  the model does not report at the time is not captured, a loss this design
+  accepts.
+
+The edges follow the novelty answer: `duplicate` becomes a touch on the
 existing node's evidence count, `refines` and `contradicts` become edges,
 `new` becomes a node.
 
-One exception: **`constraint` bypasses the confidence gate**. The human said
-it. It is law, not a probability, and it is stored verbatim with no Jev call.
+One exception: **`constraint` bypasses the confidence gate**, and because of
+that it has the strictest capture of any bucket. A false constraint is a
+permanent standing order, so in v1 only the explicit path writes:
+
+- **Explicit:** the human says "remember:", "standing rule:", "from now on",
+  or invokes `/constraint`. Stored verbatim, no Jev call, with provenance
+  (session id and the prompt line it came from).
+- **Implicit:** a local heuristic spots a correction shape ("don't", "never",
+  "always"). It stores nothing. It may offer once, "want this as a standing
+  rule?", and a yes routes through the explicit path. Zero false constraints,
+  at the cost of one confirmation.
+
+Constraints are auditable the way recall refs are: a `list` command prints
+every constraint with its id and provenance, and `drop <id>` removes one.
+
+## Where it lives
+
+The component dir is `knowledge/`, holding the store module (an importable
+library, the way hooks import `airlock/recall.py`), the MCP server and the
+installer wiring (`--knowledge`). Hooks go in `hooks/` under the `airlock_*`
+naming like every other hook.
+
+The MCP server is its own, exposing `graph_log` (and a read tool later). It
+does not ride the decide server: decide's shipped contract is stateless
+judgment, Jev never writes, and a stateful write tool would poison that one
+clean rule. Two servers, two one-sentence contracts: decide judges,
+knowledge remembers. Server-side, `graph_log` runs the same stage-2 gate
+before writing; self-reports get judged too.
 
 ## Retrieval
 
-- **SessionStart:** constraints are injected always. Then the top few nodes
-  whose entities match the repo and branch, the same shape as the recall
-  resurface hook: a one-line redacted preview per node, capped.
-- **UserPromptSubmit:** a skill-suggest-shaped hook. Jev picks at most two
-  relevant nodes for the turn, or says none fits. One line each.
+Context is the scarce resource, so every injection point carries a pinned
+budget.
+
+- **PostToolUseFailure:** the failure's signature is hashed and looked up,
+  an exact local match, sub-millisecond, no network. A hit injects **two
+  lines**, seen this failure before and the fix that worked, at most once
+  per signature per 10 minutes, failure-verdict's dedup discipline. This is
+  the moment the graph pays for itself, and it only works at tool-call time.
+- **SessionStart:** every `constraint` node always, they are law and there
+  should be few (past ten, a printed warning says the list smells). Then
+  **at most 5** scope-matching nodes, one line each, 70-character redacted
+  previews, the resurface hook's discipline tightened for something that
+  fires every session.
+- **UserPromptSubmit:** a skill-suggest-shaped hook. One Jev call over the
+  prompt and candidate node titles picks **at most 2** nodes, the recipe
+  that halved wrong skill loads, and silence is the default: none fits
+  injects nothing, and a short or trivial prompt skips the Jev call
+  entirely on a local length check.
 
 Retrieval is advice only. Nothing here blocks a call; that stays Airlock's
 job.
 
 ## Lifecycle
 
-- **Promotion:** a nightly timer, like the tuning loop, clusters episodes and
-  asks Jev to score each cluster for promotion to `pattern`. A pattern's
-  trust is its evidence edge count and is printed with it.
-- **Decay:** episode nodes carry a TTL; a node nothing has touched expires.
-  Caps enforced on every write, the recall store's 7-day/50 MB discipline
-  with numbers to be picked from real use. `constraint` nodes never expire.
+Everything is write-triggered. No timer owns the graph; the recall store
+already proves the shape, enforcing its TTL and cap on every write.
+
+- **Promotion:** when a write gives a cluster its third supporting episode,
+  the same stage-2 decide call carries one more question, promote or not. A
+  pattern's trust is its evidence edge count and is printed with it.
+- **Decay:** episode nodes carry a TTL; expiry and caps are enforced on every
+  write, the recall store's 7-day/50 MB discipline with numbers to be picked
+  from real use. `constraint` nodes never expire.
 - **Contradiction:** a confident `contradicts` answer writes the edge and
-  flags the pair for the nightly pass, which keeps one and marks the other
-  superseded. Nothing is deleted silently.
+  resolves it in the same write: the newer node wins, the older is marked
+  superseded, both kept. Nothing is deleted silently.
 
 ## Invariants
 
@@ -125,11 +185,13 @@ The standard kit set, none negotiable:
   redacted candidate text in the stage-2 decide call.
 - Every string through `airlock/redact.py` before any Jev call.
 - Fails open. A dead graph changes nothing about a session.
-- Kill switch: one state file, same pattern as failure-verdict's
-  `on`/`shadow`/`off`.
-- Ships as `off`, runs in `shadow` first, and gets a labelled eval before
-  `on` is documented. It enters [components.md](components.md) as
-  **experimental** and earns `exercised` the same way everything else did.
+- Kill switch: one state file, `on` or `off`. No third state, by decision:
+  **all or nothing, on from day 1**. The component can skip the kit's usual
+  shadow rehearsal because every path is advice-only and fail-open; the worst
+  a bad graph can do is print a wrong two-line hint and fill a capped,
+  deletable local database. It enters [components.md](components.md) as
+  **experimental**, `metrics.db` logs every gate call from the first day, and
+  `exercised` is earned from live numbers instead of a rehearsal.
 
 ## Open questions
 
@@ -137,12 +199,25 @@ The standard kit set, none negotiable:
    nodes" needs a local similarity measure (name match first, embeddings only
    if that is not enough) and the novelty question is the load-bearing one.
    Measure its accuracy before anything else.
-2. Error signatures: what normalization makes two tracebacks "the same
-   failure" without collapsing different ones? Paths and line numbers out,
-   exception type and message shape in, but this needs a labelled set.
-3. Harvest at Stop: how much of a decision's rationale can be recovered from
-   the transcript cheaply, and is a `decision` node worth anything without
-   the rejected alternatives?
-4. Scope `global` versus `repo`: one database with a scope column, or one
-   database per repo with a global overlay? The resurface hook needs the
-   answer early.
+2. **Resolved 2026-10-15:** two-level identity. Exact level, local and free:
+   `hash(tool_name + exception_type + normalized_message)` with paths,
+   numbers, hex ids and quoted strings replaced by placeholders, and no stack
+   frames (frame paths churn with refactors; failure-verdict already works
+   from the head of the error alone). Near level: on an exact miss, the
+   stage-2 novelty question runs against the three nearest nodes, nearest
+   meaning same exception type and entity anchor, ranked by token overlap on
+   the normalized message. No embeddings in v1; the live drop and duplicate
+   counts in `metrics.db` decide if that is ever needed. The normalizer is a pure function and gets a labelled
+   same/different pair set before any hook exists: **milestone 1 of the
+   component.**
+3. **Resolved 2026-10-15:** no harvest, no transcript mining, no cold path.
+   A `decision` is self-reported through `graph_log` at the moment of
+   deciding, with the trigger rule in the server's MCP instructions. A
+   decision node with an empty rejected-alternatives field is never written.
+   What self-report misses goes unmeasured, a loss this design accepts.
+4. **Resolved 2026-10-15:** one global database with a `scope` column
+   (`repo:<path>`, `machine`, `global`), filtered at read time. Matches the
+   `metrics.db` and recall-store precedent: one TTL path, one purge, one kill
+   switch. Per-repo stores would orphan exactly the nodes worth the most
+   across repos, the `env` and `danger` ones, and dedup would have to search
+   both stores anyway.
