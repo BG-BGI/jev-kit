@@ -1,7 +1,9 @@
 # belay: the jev-belay Stop hook, wrapped
 
+[BG-BGI/jev-belay](https://github.com/BG-BGI/jev-belay), our fork of
 [valentynkit/jev-belay](https://github.com/valentynkit/jev-belay), pinned at
-commit `98f39e0`. On the Claude Code **Stop** event it looks at the last turn's
+commit `467968e`. The fork exists because upstream rewrote history once and
+orphaned the previous pin. On the Claude Code **Stop** event it looks at the last turn's
 mutations and check commands. Only where there is evidence of a change with no
 fresh passing check does it ask TypeSafe's Jev model four questions about
 whether the final message overclaims completion. It is used
@@ -10,14 +12,14 @@ here unmodified, at a pin, scoped to one account at a time; see
 
 What it sends off the machine, read from its own source: the task text, the
 final assistant message, and check command lines. All three run through a
-13-rule secret redactor first, capped at 1,500 + 2,000 characters. No diffs, no file
+14-rule secret redactor first, capped at 1,500 + 2,000 characters. No diffs, no file
 contents, no tool inputs.
 
 ## What gets installed
 
 | Item | Goes to | What it does |
 |---|---|---|
-| a pinned clone | `~/.local/share/jev-belay/releases/<sha>/` | The upstream source at commit `98f39e0` |
+| a pinned clone | `~/.local/share/jev-belay/releases/<sha>/` | The fork's source at commit `467968e` |
 | `current` symlink | `~/.local/share/jev-belay/current` | Flipped atomically at the release; re-pinning is cloning a new sha and re-flipping |
 | `run.sh`, installed | `$HOME/bin/airlock-belay-run` | The wrapper the Stop hook actually calls |
 
