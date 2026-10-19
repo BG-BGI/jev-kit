@@ -18,6 +18,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/portable.sh"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 
+# The kit is either the whole repository (this repo) or a vendored subtree
+# of a larger one (jev-stack carries it as core/). KIT_REL is the kit's
+# path inside the repo, empty when the kit IS the repo. The tests and the
+# release export below must both use the kit's subtree: against a wrapping
+# repo's root, `unittest discover -s tests` finds no tests and aborts the
+# deploy, and a release of the whole repo would leave `current` pointing
+# at a directory with no hooks/.
+KIT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+REPO_ROOT_P="$(cd "$REPO_ROOT" && pwd -P)"
+case "$KIT_ROOT" in
+  "$REPO_ROOT_P") KIT_REL="" ;;
+  "$REPO_ROOT_P"/*) KIT_REL="${KIT_ROOT#"$REPO_ROOT_P"/}" ;;
+  *)
+    echo "deploy.sh: kit root $KIT_ROOT is not inside repo $REPO_ROOT_P" >&2
+    exit 1
+    ;;
+esac
+
 # The MAIN checkout is always the first entry `git worktree list` reports,
 # regardless of which worktree this script is invoked from -- same trick
 # tuning/tune.py's find_main_repo() uses, so it's never hard-coded here.
@@ -53,7 +71,7 @@ echo "deploy.sh: running unit tests against the clean export..." >&2
 TEST_HOME="$(mktemp -d)"
 # env -i rather than a list of names to strip: a machine's install/config.env
 # can export any AIRLOCK_* variable, and a list is always one name behind.
-( cd "$TEST_TMP" && env -i PATH="$PATH" HOME="$TEST_HOME" python3 -m unittest discover -s tests )
+( cd "$TEST_TMP${KIT_REL:+/$KIT_REL}" && env -i PATH="$PATH" HOME="$TEST_HOME" python3 -m unittest discover -s tests )
 rm -rf "$TEST_HOME"
 echo "deploy.sh: unit tests passed" >&2
 
@@ -66,7 +84,14 @@ if [ -d "$RELEASE_DIR" ]; then
 else
   EXPORT_TMP="$(mktemp -d "$RELEASES_DIR/.export-XXXXXX")"
   git -C "$MAIN_REPO" archive "$SHA" | tar -x -C "$EXPORT_TMP"
-  mv "$EXPORT_TMP" "$RELEASE_DIR"
+  if [ -n "$KIT_REL" ]; then
+    # Release only the kit's subtree, so `current` always points at a
+    # directory whose hooks/ the wired settings.json can reference.
+    mv "$EXPORT_TMP/$KIT_REL" "$RELEASE_DIR"
+    rm -rf "$EXPORT_TMP"
+  else
+    mv "$EXPORT_TMP" "$RELEASE_DIR"
+  fi
 fi
 
 # --- 2b. the browser agent's Python environment. vendor/jev-ultrafast rides
