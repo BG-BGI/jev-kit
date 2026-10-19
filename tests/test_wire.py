@@ -772,3 +772,21 @@ class TestBrowseUnlockEntry(WireTestBase):
         out = _run(path, apply_=False, browse_unlock=True, browse_hook=hook)
         self.assertEqual(Path(path).read_text(), before)
         self.assertIn("browse unlock", out.stdout)
+
+
+class TestBelayWiredAfterItsInstallStep(unittest.TestCase):
+    """Regression tripwire for the shadow-install bug: the guard step's wire
+    runs before belay/install.sh creates the wrapper, so its --belay is
+    skipped. The Belay step must therefore re-run wire.sh --apply --belay
+    itself once the wrapper exists, or belay never fires, its doctor fails,
+    and an install whose arming gates on that doctor sits in shadow."""
+
+    def test_belay_step_rewires_the_stop_hook(self):
+        install = Path(__file__).resolve().parent.parent / "install" / "install.sh"
+        text = install.read_text()
+        start = text.index('step "Belay"')
+        end = text.index('step "', start + 1)
+        belay_step = text[start:end]
+        self.assertIn("wire.sh", belay_step)
+        self.assertIn("--apply --belay", belay_step)
+        self.assertIn("WIRE_FILES", belay_step)
