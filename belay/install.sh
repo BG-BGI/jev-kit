@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Clone valentynkit/jev-belay at a pinned commit, keep it as an immutable
+# Clone BG-BGI/jev-belay (our fork of valentynkit/jev-belay) at a pinned
+# commit, keep it as an immutable
 # release under releases/<sha>, flip 'current' at it, install the wrapper,
 # and PRINT the Stop-hook settings.json block -- this script never edits
 # settings.json itself. Apply it to whichever account's settings you mean to
@@ -7,8 +8,11 @@
 # turning it on anywhere else.
 set -uo pipefail
 
-UPSTREAM_URL="https://github.com/valentynkit/jev-belay"
-UPSTREAM_COMMIT="98f39e04492068e39b48962183acf43b4337da32"
+# The fork, not valentynkit's repository: upstream rewrote history once and
+# orphaned the previous pin (98f39e0), which made this clone-and-checkout fail.
+# The fork is the availability guarantee; upstream changes flow through it.
+UPSTREAM_URL="https://github.com/BG-BGI/jev-belay"
+UPSTREAM_COMMIT="467968eb7a1c1b174c523299f9ab8159c9999016"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../install/portable.sh"
