@@ -45,7 +45,7 @@ airlock installer
 usage: $0 [components] [options]
 
 Components (default: --guard --session-check --daemon --monitoring
-            --filesearch --claude-update --belay --decide-mcp):
+            --filesearch --claude-update --belay --decide-mcp --stats):
   --guard        the PreToolUse guard itself: deploy a release, create the
                  config directory, print the settings.json edit
   --session-check  the SessionStart check that tells YOU, at the moment you
@@ -65,6 +65,10 @@ Components (default: --guard --session-check --daemon --monitoring
                  `claude mcp add --scope user`; idempotent). The rule for when
                  Claude should call it ships inside the server. Undo:
                  claude mcp remove --scope user jev-decide
+  --stats        register the jev-kit plugin marketplace with Claude Code and
+                 install the jev-stats pane plugin from it (through
+                 `claude plugin install`; idempotent; entirely local). Undo:
+                 claude plugin uninstall jev-stats@jev-kit
   --review       clone devagrawal09/jev-review at a pin (needs Node 24)
   --shim         the OpenAI-shaped shim over the claude CLI
   --claude-update  the idle-only Claude Code auto-updater and its timer
@@ -118,6 +122,7 @@ WANT_FILESEARCH=0; WANT_BROWSER=0; WANT_REVIEW=0; WANT_SHIM=0
 WANT_CLAUDE_UPDATE=0; WANT_BELAY=0; WANT_COMPACTION=0
 WANT_BROWSE_MCP=0
 WANT_DECIDE_MCP=0
+WANT_STATS=0
 WANT_SKILL_SUGGEST=0
 WANT_FAILURE_VERDICT=0
 WANT_KNOWLEDGE=0
@@ -147,6 +152,7 @@ while [ "$#" -gt 0 ]; do
     --browser) WANT_BROWSER=1; ANY_COMPONENT=1; shift ;;
     --browse-mcp) WANT_BROWSE_MCP=1; ANY_COMPONENT=1; shift ;;
     --decide-mcp) WANT_DECIDE_MCP=1; ANY_COMPONENT=1; shift ;;
+    --stats) WANT_STATS=1; ANY_COMPONENT=1; shift ;;
     --review) WANT_REVIEW=1; ANY_COMPONENT=1; shift ;;
     --shim) WANT_SHIM=1; ANY_COMPONENT=1; shift ;;
     --claude-update) WANT_CLAUDE_UPDATE=1; ANY_COMPONENT=1; shift ;;
@@ -164,7 +170,7 @@ while [ "$#" -gt 0 ]; do
       WANT_GUARD=1; WANT_DAEMON=1; WANT_TUNING=1; WANT_MONITORING=1
       WANT_FILESEARCH=1; WANT_BROWSER=1; WANT_REVIEW=1; WANT_SHIM=1
       WANT_CLAUDE_UPDATE=1; WANT_BELAY=1; WANT_COMPACTION=1
-      WANT_BROWSE_MCP=1; WANT_DECIDE_MCP=1; WANT_SKILL_SUGGEST=1; WANT_FAILURE_VERDICT=1
+      WANT_BROWSE_MCP=1; WANT_DECIDE_MCP=1; WANT_STATS=1; WANT_SKILL_SUGGEST=1; WANT_FAILURE_VERDICT=1
       WANT_KNOWLEDGE=1
       FILESEARCH_EXPLICIT=1; ANY_COMPONENT=1; shift ;;
     --headless) HEADLESS_CHOICE=yes; shift ;;
@@ -185,7 +191,7 @@ done
 
 if [ "$ANY_COMPONENT" = "0" ]; then
   WANT_GUARD=1; WANT_DAEMON=1; WANT_MONITORING=1; WANT_FILESEARCH=1
-  WANT_CLAUDE_UPDATE=1; WANT_BELAY=1; WANT_DECIDE_MCP=1
+  WANT_CLAUDE_UPDATE=1; WANT_BELAY=1; WANT_DECIDE_MCP=1; WANT_STATS=1
 fi
 
 # --- output helpers ---------------------------------------------------------
@@ -374,6 +380,7 @@ plan "$WANT_FILESEARCH" "filesearch"
 plan "$WANT_BROWSER" "browser"
 plan "$WANT_BROWSE_MCP" "browse-mcp (prints the mcpServers block, applies nothing)"
 plan "$WANT_DECIDE_MCP" "decide-mcp (claude mcp add --scope user jev-decide)"
+plan "$WANT_STATS" "stats (claude plugin install jev-stats@jev-kit)"
 plan "$WANT_REVIEW" "review"
 plan "$WANT_SHIM" "shim"
 plan "$WANT_CLAUDE_UPDATE" "claude-update"
@@ -847,6 +854,12 @@ fi
 if [ "$WANT_DECIDE_MCP" = "1" ]; then
   step "Decide MCP server"
   "$REPO_ROOT/decide/install.sh" || warn "decide/install.sh reported a problem"
+fi
+
+# After --guard on purpose: it prefers the deployed release's marketplace manifest.
+if [ "$WANT_STATS" = "1" ]; then
+  step "jev-stats plugin"
+  "$REPO_ROOT/mods/install.sh" || warn "mods/install.sh reported a problem"
 fi
 
 # After --guard on purpose: it prefers the deployed release's copy of knowledge/.
