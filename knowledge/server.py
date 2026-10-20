@@ -63,6 +63,11 @@ SHOWN_TEXT = 200
 TOOLS = [
     {
         "name": "graph_log",
+        # Claude Code defers MCP tool schemas by default; a deferred graph_log
+        # is never called in practice, so the write path stays empty. This
+        # _meta hint asks the client to load it upfront (v2.1.287+; older
+        # clients ignore unknown _meta keys).
+        "_meta": {"anthropic/alwaysLoad": True},
         "description": (
             "Write one node to the experience graph (experimental, stateful: this stores "
             "something). Use it when you abandon an approach or choose between named "
