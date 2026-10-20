@@ -124,12 +124,15 @@ export const register: Register = on => {
         <Text>{line('jev cost', p => fmtUsd(p.cost))}</Text>
         <Text>{line('trim saved', p => fmt(p.saved))}</Text>
         <Text>{line('total saved', p => fmt(p.eff))}</Text>
-        {s.models.map(m => (
-          <Text key={m.model} dimColor>
-            {('  ' + shortModel(m.model)).slice(0, 12).padEnd(12) +
-              cols.map(([k]) => pad(fmt(m.eff[k]), W)).join('')}
+        {s.models.some(m => m.eff.month > 0) && (
+          <Text dimColor>
+            {'by model: ' +
+              s.models
+                .filter(m => m.eff.month > 0)
+                .map(m => `${shortModel(m.model)} ${fmt(m.eff.month)}`)
+                .join(' · ')}
           </Text>
-        ))}
+        )}
         <Text dimColor>tokens; total saved = trim x later requests. {s.updatedAt}</Text>
       </Box>
     )
