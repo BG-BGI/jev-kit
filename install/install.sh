@@ -893,7 +893,18 @@ fi
 
 if [ "$WANT_BELAY" = "1" ]; then
   step "Belay"
-  "$REPO_ROOT/belay/install.sh" || warn "belay/install.sh reported a problem"
+  if "$REPO_ROOT/belay/install.sh"; then
+    # The guard step's wire ran before this wrapper existed, so its --belay
+    # was skipped ("no wrapper"). Wire the Stop hook now that the wrapper is
+    # real; otherwise belay never runs, its doctor fails, and an install
+    # whose arming is gated on that doctor is left sitting in shadow.
+    if [ "${#WIRE_FILES[@]}" -gt 0 ]; then
+      "$SCRIPT_DIR/wire.sh" --apply --belay "${WIRE_FILES[@]}" \
+        || warn "belay Stop hook wiring reported a problem"
+    fi
+  else
+    warn "belay/install.sh reported a problem"
+  fi
 fi
 
 if [ "$WANT_COMPACTION" = "1" ]; then
