@@ -96,6 +96,12 @@ class TestProtocol(unittest.TestCase):
         names = [t["name"] for t in rpc("tools/list")["result"]["tools"]]
         self.assertEqual(names, ["graph_log", "graph_search", "graph_constraint_drop"])
 
+    def test_graph_log_asks_to_be_loaded_upfront(self):
+        # A deferred graph_log never gets called; the _meta hint keeps the
+        # write path loaded in clients that honor anthropic/alwaysLoad.
+        tools = {t["name"]: t for t in rpc("tools/list")["result"]["tools"]}
+        self.assertIs(tools["graph_log"]["_meta"]["anthropic/alwaysLoad"], True)
+
     def test_unknown_tool_and_method(self):
         self.assertEqual(rpc("tools/call", {"name": "nope"})["error"]["code"], -32602)
         self.assertEqual(rpc("nope")["error"]["code"], -32601)
