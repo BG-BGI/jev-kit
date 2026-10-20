@@ -111,7 +111,6 @@ export const register: Register = on => {
       ['month', 'month'],
     ]
     const W = 9
-    const NAME_W = 18
     const line = (label: string, value: (p: PeriodStats) => string) =>
       label.padEnd(12) + cols.map(([k]) => pad(value(s.periods[k]), W)).join('')
 
@@ -125,17 +124,12 @@ export const register: Register = on => {
         <Text>{line('jev cost', p => fmtUsd(p.cost))}</Text>
         <Text>{line('trim saved', p => fmt(p.saved))}</Text>
         <Text>{line('total saved', p => fmt(p.eff))}</Text>
-        {s.models.length > 0 && (
-          <Box flexDirection="column" marginTop={1}>
-            <Text bold>{'saved by model'.padEnd(NAME_W) + cols.map(([, h]) => pad(h, W)).join('')}</Text>
-            {s.models.map(m => (
-              <Text key={m.model}>
-                {shortModel(m.model).slice(0, NAME_W - 1).padEnd(NAME_W) +
-                  cols.map(([k]) => pad(fmt(m.eff[k]), W)).join('')}
-              </Text>
-            ))}
-          </Box>
-        )}
+        {s.models.map(m => (
+          <Text key={m.model} dimColor>
+            {('  ' + shortModel(m.model)).slice(0, 12).padEnd(12) +
+              cols.map(([k]) => pad(fmt(m.eff[k]), W)).join('')}
+          </Text>
+        ))}
         <Text dimColor>tokens; total saved = trim x later requests. {s.updatedAt}</Text>
       </Box>
     )
