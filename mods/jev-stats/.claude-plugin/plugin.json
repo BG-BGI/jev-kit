@@ -1,6 +1,6 @@
 {
   "name": "jev-stats",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Live jev-kit metrics pane: session, day, week and month stats from airlock metrics.db",
   "types": "./types/index.d.ts"
 }
