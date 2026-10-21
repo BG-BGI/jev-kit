@@ -191,6 +191,9 @@ class TestProtocol(unittest.TestCase):
              "params": {"name": "decide", "arguments": {"question": "q"}}})
         self.assertEqual([r["id"] for r in responses], [1, 2, 3])
         self.assertEqual(responses[1]["result"]["tools"][0]["name"], "decide")
+        # A deferred decide tool never gets called; the _meta hint keeps it
+        # loaded in clients that honor anthropic/alwaysLoad.
+        self.assertIs(responses[1]["result"]["tools"][0]["_meta"]["anthropic/alwaysLoad"], True)
         payload = json.loads(responses[2]["result"]["content"][0]["text"])
         self.assertTrue(payload["decisions"]["decision"]["answer"])
 
