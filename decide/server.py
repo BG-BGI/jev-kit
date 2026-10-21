@@ -87,6 +87,11 @@ KINDS = ("choice", "score", "yesno")
 
 TOOL = {
     "name": "decide",
+    # Claude Code defers MCP tool schemas by default; a deferred decide tool is
+    # almost never called (8 invocations across every transcript on the first
+    # machine measured). Same hint as knowledge's graph_log: ask the client to
+    # load it upfront (v2.1.287+; older clients ignore unknown _meta keys).
+    "_meta": {"anthropic/alwaysLoad": True},
     "description": (
         "Ask Jev (TypeSafe's System One model) for a calibrated decision between options "
         "you can name, instead of reasoning it out yourself. Returns the pick, a "
