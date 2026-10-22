@@ -119,3 +119,27 @@ mode blocks the tool. Nobody needs to edit a `CLAUDE.md`. The text is
   sends a trigger rule with `initialize` (see below). It makes Claude call the
   tool on large inputs, but your real work may rarely have any: in one
   maintainer's history, a few calls a month.
+
+## Screenshots: the box kind
+
+TypeSafe's `box` primitive (a preview feature) finds something in an image.
+The kind `box` plus `image_file` asks where a named target sits in a
+screenshot. The answer is four edges, each a fraction of the image from the
+top left, plus `present` and `probability_present` from a paired visibility
+check the server adds itself, because Jev returns a box even when the target
+is not there. Image requests go to the vision model (`jev-preview`) and skip
+the warm daemon.
+
+```json
+{"image_file": "pane.png",
+ "decisions": [{"name": "by_model", "kind": "box",
+                "question": "the dim `by model:` summary line"}]}
+```
+
+An image cannot go through `airlock/redact.py`, so images are the one part of
+the kit that is **off until a human turns it on**: write `on` to
+`~/.config/airlock/images`. Until then every `image_file` call is refused
+with that path in the error. PNG and JPEG only, 5 MB cap, and a path that
+looks like a secret store is refused the same way `context_file` is. Never
+pass a screenshot that shows a key or a credential: redaction cannot save
+you here.

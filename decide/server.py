@@ -24,6 +24,7 @@ Every context and question goes through airlock/redact.py before it leaves
 the machine, and each call is a row in ~/.local/state/airlock/decide.jsonl.
 Standard library only, like browse/server.py.
 """
+import base64
 import datetime
 import json
 import os
@@ -61,6 +62,9 @@ INSTRUCTIONS = (
     "reason the decisions out yourself and say in the reply that Jev was unavailable in plan mode.\n"
     "Skip it for fewer than 10 items, a file under ~100 lines, arithmetic, one-line facts, or "
     "anything with a single safe default; small picks cost more with Jev than reasoning inline.\n"
+    "For a screenshot check, kind `box` with `image_file` locates what you name (edges 0-1 from "
+    "the top-left) and says whether it is present at all; it needs the images switch, which is "
+    "off by default, and the error says how to turn it on.\n"
     "Act on an answer marked `confident`; treat one that is not as a hint. Never use it to write "
     "text or code, or for a decision whose answers you cannot list."
 )
@@ -83,7 +87,15 @@ CHUNK_ITEMS = 60
 ITEM_CONTEXT_CHARS = 4000
 WORKERS = 4
 SHOWN = 50
-KINDS = ("choice", "score", "yesno")
+KINDS = ("choice", "score", "yesno", "box")
+# Images are TypeSafe's preview feature: they ride as `assets`, need the
+# vision model, and CANNOT go through airlock/redact.py, so unlike every
+# other component they are off until a human writes `on` to the switch file.
+VISION_MODEL = "jev-preview"
+IMAGE_FORMATS = {".png": "png", ".jpg": "jpg", ".jpeg": "jpeg"}
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+IMAGES_SWITCH = "images"
+IMAGE_ASSET = "img"
 
 TOOL = {
     "name": "decide",
@@ -97,7 +109,9 @@ TOOL = {
         "you can name, instead of reasoning it out yourself. Returns the pick, a "
         "probability per option, and whether it is confident. Use it for: choosing among "
         "candidate files, approaches, tools or skills; classifying items; yes/no checks "
-        "over long text; severity or quality scores. Batch every decision that shares a "
+        "over long text; severity or quality scores. Kind `box` with image_file locates a "
+        "named target in a screenshot and says whether it is present (opt-in: the images "
+        "switch). Batch every decision that shares a "
         "context into one call: twenty decisions cost about what one does. Never for "
         "writing text or code, and never for a decision whose answers you cannot list."
     ),
@@ -122,6 +136,12 @@ TOOL = {
             "context": {"type": "string",
                         "description": "The facts to decide over: the text, listing, diff or "
                                        "description. Redacted before it is sent."},
+            "image_file": {"type": "string",
+                           "description": "A png/jpeg (a screenshot, say) to decide over, named "
+                                          "`img` in the state. Required for kind `box`. Images "
+                                          "cannot be redacted, so this is refused unless the "
+                                          "images switch says `on`; never pass an image showing "
+                                          "secrets."},
             "decisions": {
                 "type": "array", "maxItems": MAX_DECISIONS,
                 "items": {
@@ -175,6 +195,36 @@ def read_file(path):
         return full, f.read()
 
 
+def images_enabled():
+    """True only when the switch file says `on`. Images bypass redaction, so
+    unlike every other component this one is OFF until a human enables it."""
+    from airlock import paths
+    try:
+        text = paths.config_file(IMAGES_SWITCH).read_text(encoding="utf-8")
+        return text.strip().lower() == "on"
+    except Exception:
+        return False
+
+
+def read_image(path):
+    """(format, base64 data) of an image the model named, or DecideError.
+    The bytes cannot be redacted, so the secret-path check is the only gate
+    here; the caller checks the opt-in switch first."""
+    from airlock import rules
+    full = os.path.realpath(os.path.expanduser(str(path)))
+    if rules.is_secret_path(full):
+        raise DecideError("refusing %s: it looks like a secret store" % path)
+    ext = os.path.splitext(full)[1].lower()
+    if ext not in IMAGE_FORMATS:
+        raise DecideError("image_file must be png or jpeg, not %r" % (ext or path))
+    if not os.path.isfile(full):
+        raise DecideError("no such file: %s" % path)
+    if os.path.getsize(full) > MAX_IMAGE_BYTES:
+        raise DecideError("%s is over %d MB" % (path, MAX_IMAGE_BYTES // (1024 * 1024)))
+    with open(full, "rb") as f:
+        return IMAGE_FORMATS[ext], base64.b64encode(f.read()).decode("ascii")
+
+
 def parse_items(full, text, limit):
     """[(where, item text)]: line numbers for a text or JSONL file, indexes
     for a JSON array. Blank lines are skipped."""
@@ -224,11 +274,41 @@ def build(args):
                 raise DecideError("decision %r needs 2 to %d score levels, lowest first"
                                   % (name, MAX_LEVELS))
             question["criteria"] = levels
+        elif kind == "box":
+            if d.get("options"):
+                raise DecideError("decision %r: a box takes no options" % name)
+            question["instructions"] = "In the image `%s`: %s" % (
+                IMAGE_ASSET, redact.redact(str(d["question"])))
         if name in questions:
             raise DecideError("two decisions are named %r" % name)
         questions[name] = question
         order.append((name, kind))
-    return {"state": {"context": _context(args)}, "model": MODEL, "questions": questions}, order
+    # A box always comes back, target present or not, so each one gets a
+    # paired presence noul that shape() folds into the same decision.
+    for name, kind in order:
+        if kind != "box":
+            continue
+        pname = name + "__present"
+        if pname in questions:
+            raise DecideError("decision name %r collides with the box presence check" % pname)
+        questions[pname] = {"type": "noul",
+                            "instructions": "The target of this instruction is visible in the "
+                                            "image `%s`: %s"
+                                            % (IMAGE_ASSET, questions[name]["instructions"])}
+    body = {"state": {"context": _context(args)}, "model": MODEL, "questions": questions}
+    if any(kind == "box" for _, kind in order) and not args.get("image_file"):
+        raise DecideError("a box decision needs image_file: the image to look in")
+    if args.get("image_file"):
+        if not images_enabled():
+            from airlock import paths
+            raise DecideError(
+                "image input is off (images bypass redaction). A human can enable it by "
+                "writing `on` to %s" % paths.config_file(IMAGES_SWITCH))
+        fmt, data = read_image(args["image_file"])
+        body["assets"] = {IMAGE_ASSET: {"type": "image", "format": fmt, "data_base64": data}}
+        body["state"]["image"] = IMAGE_ASSET
+        body["model"] = VISION_MODEL
+    return body, order
 
 
 def _context(args, limit=CONTEXT_CHARS):
@@ -256,6 +336,17 @@ def shape(response, order, latency_ms):
             p = float(a.get("noul") or 0.0)
             out[name] = {"answer": p >= 0.5, "probability_true": round(p, 3),
                          "confident": abs(p - 0.5) >= CONFIDENT[0] - 0.5}
+            continue
+        if kind == "box":
+            box = a.get("box") or {}
+            conf = a.get("confidence")
+            present = float((answers.get(name + "__present") or {}).get("noul") or 0.0)
+            out[name] = {"answer": {e: box.get(e) for e in ("top", "bottom", "left", "right")},
+                         "confidence": conf,
+                         "present": present >= 0.5,
+                         "probability_present": round(present, 3),
+                         "confident": bool(conf is not None and conf >= CONFIDENT[0]
+                                           and abs(present - 0.5) >= CONFIDENT[0] - 0.5)}
             continue
         probs = {k: round(float(v), 3) for k, v in (a.get("probabilities") or {}).items()}
         conf = a.get("confidence")
@@ -302,6 +393,8 @@ def classify_items(args, ask):
     kind = args.get("kind") or ("choice" if args.get("options") else "yesno")
     if kind not in KINDS:
         raise DecideError("kind must be one of %s" % ", ".join(KINDS))
+    if kind == "box":
+        raise DecideError("items_file mode cannot box: one image, one call")
     if not str(args.get("question") or "").strip():
         raise DecideError("items_file needs a question")
     if kind != "yesno":
