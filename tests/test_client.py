@@ -52,6 +52,26 @@ class TestClient(unittest.TestCase):
         self.assertEqual(result["answers"]["task_kind"]["choice"], "lookup")
         self.assertGreaterEqual(latency_ms, 0)
 
+    def test_assets_set_the_danger_zone_header_and_model(self):
+        fake = {"model": "jev-preview", "answers": {}, "usage": {}}
+        assets = {"img": {"type": "image", "format": "png", "data_base64": "aGk="}}
+        with mock.patch("urllib.request.urlopen", return_value=_FakeResponse(fake)) as urlopen:
+            client.call_jev("fake-key", {"x": 1}, {"q": {}}, timeout=5,
+                            model="jev-preview", assets=assets)
+        req = urlopen.call_args[0][0]
+        self.assertEqual(req.get_header("Typesafe-danger-zone-images"), "true")
+        body = json.loads(req.data.decode("utf-8"))
+        self.assertEqual(body["model"], "jev-preview")
+        self.assertEqual(body["assets"], assets)
+
+    def test_no_assets_means_no_danger_zone_header(self):
+        fake = {"model": "jev-1.13.0", "answers": {}, "usage": {}}
+        with mock.patch("urllib.request.urlopen", return_value=_FakeResponse(fake)) as urlopen:
+            client.call_jev("fake-key", {"x": 1}, {"q": {}}, timeout=5)
+        req = urlopen.call_args[0][0]
+        self.assertIsNone(req.get_header("Typesafe-danger-zone-images"))
+        self.assertNotIn("assets", json.loads(req.data.decode("utf-8")))
+
     def test_non_object_json_is_a_typesafe_error(self):
         """Valid JSON that is not an object (null, a list) is as unusable as
         bad JSON; callers would otherwise hit AttributeError on .get()."""
@@ -94,6 +114,21 @@ class TestAskFallback(unittest.TestCase):
         call_jev.assert_called_once()
         self.assertEqual(result["model"], "jev-1.13.0")
         self.assertEqual(latency_ms, 900)
+
+    def test_assets_skip_the_daemon_and_pass_through(self):
+        # The daemon never sends the danger-zone header, so an image request
+        # must go direct even when the daemon is up.
+        fake = ({"model": "jev-preview", "answers": {}, "usage": {}}, 400)
+        body = {"state": {"image": "img"}, "model": "jev-preview", "questions": {},
+                "assets": {"img": {"type": "image", "format": "png", "data_base64": "aGk="}}}
+        with mock.patch.object(client, "_ask_via_daemon") as via_daemon, \
+             mock.patch.object(client, "call_jev", return_value=fake) as call_jev, \
+             mock.patch.object(client.keyfile, "get_api_key", return_value="fake-key"):
+            result, _ = client.ask(body)
+        via_daemon.assert_not_called()
+        self.assertEqual(call_jev.call_args.kwargs["model"], "jev-preview")
+        self.assertEqual(call_jev.call_args.kwargs["assets"], body["assets"])
+        self.assertEqual(result["model"], "jev-preview")
 
     def test_no_api_key_raises_without_a_network_call(self):
         with tempfile.TemporaryDirectory() as d:

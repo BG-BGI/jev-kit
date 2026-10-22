@@ -31,6 +31,10 @@ class FakeJev:
         for name, q in body["questions"].items():
             if q["type"] == "noul":
                 answers[name] = {"type": "noul", "noul": 0.9}
+            elif q["type"] == "box":
+                answers[name] = {"type": "box",
+                                 "box": {"top": 0.2, "bottom": 0.8, "left": 0.1, "right": 0.9},
+                                 "confidence": 0.92}
             elif q["type"] == "score":
                 answers[name] = {"type": "score", "score": 1.1, "confidence": 0.9,
                                  "probabilities": {"0": 0.0, "1": 0.9, "2": 0.1},
@@ -176,6 +180,85 @@ class TestFiles(unittest.TestCase):
                          "options": ["only"]}, ask=FakeItemsJev())
 
 
+PNG_BYTES = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+    "0000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082")
+
+
+class TestBox(unittest.TestCase):
+    """The box kind: locate something in a screenshot. Images are opt-in."""
+
+    def setUp(self):
+        from airlock import paths
+        self.switch = paths.config_file(server.IMAGES_SWITCH)
+        self.switch.parent.mkdir(parents=True, exist_ok=True)
+        self.switch.write_text("on", encoding="utf-8")
+        self.image = Path(tempfile.mkdtemp()) / "pane.png"
+        self.image.write_bytes(PNG_BYTES)
+
+    def tearDown(self):
+        self.switch.unlink(missing_ok=True)
+
+    def _args(self, **extra):
+        return {"context": "the jev-stats pane", "image_file": str(self.image),
+                "decisions": [{"name": "by_model", "kind": "box",
+                               "question": "the `by model:` summary line"}], **extra}
+
+    def test_box_builds_assets_presence_and_vision_model(self):
+        import base64
+        body, order = server.build(self._args())
+        self.assertEqual(order, [("by_model", "box")])
+        self.assertEqual(body["model"], server.VISION_MODEL)
+        self.assertEqual(body["state"]["image"], "img")
+        asset = body["assets"]["img"]
+        self.assertEqual((asset["type"], asset["format"]), ("image", "png"))
+        self.assertEqual(base64.b64decode(asset["data_base64"]), PNG_BYTES)
+        self.assertEqual(body["questions"]["by_model"]["type"], "box")
+        self.assertIn("image `img`", body["questions"]["by_model"]["instructions"])
+        self.assertEqual(body["questions"]["by_model__present"]["type"], "noul")
+
+    def test_box_answer_carries_edges_and_presence(self):
+        result = server.call(self._args(), ask=FakeJev())
+        d = result["decisions"]["by_model"]
+        self.assertEqual(d["answer"], {"top": 0.2, "bottom": 0.8, "left": 0.1, "right": 0.9})
+        self.assertEqual(d["confidence"], 0.92)
+        self.assertTrue(d["present"])
+        self.assertEqual(d["probability_present"], 0.9)
+        self.assertTrue(d["confident"])
+        self.assertNotIn("by_model__present", result["decisions"])
+
+    def test_images_are_off_by_default(self):
+        self.switch.unlink()
+        with self.assertRaises(server.DecideError) as ctx:
+            server.build(self._args())
+        self.assertIn(str(self.switch), str(ctx.exception))
+
+    def test_box_input_is_validated(self):
+        args = self._args()
+        del args["image_file"]
+        for bad in (args,
+                    self._args(decisions=[{"name": "a", "kind": "box", "question": "q",
+                                           "options": ["x", "y"]}]),
+                    self._args(decisions=[{"name": "a", "kind": "box", "question": "q"},
+                                          {"name": "a__present", "question": "collides?"}]),
+                    {"items_file": str(self.image), "kind": "box", "question": "q",
+                     "options": ["x", "y"]}):
+            with self.assertRaises(server.DecideError):
+                server.call(bad, ask=FakeJev())
+
+    def test_image_file_is_validated(self):
+        gif = self.image.with_suffix(".gif")
+        gif.write_bytes(PNG_BYTES)
+        for path in (str(gif), str(self.image.with_name("missing.png"))):
+            with self.assertRaises(server.DecideError):
+                server.build(self._args(image_file=path))
+
+    def test_non_box_decisions_still_use_the_text_model(self):
+        body, _ = server.build({"context": "x", "question": "true?"})
+        self.assertEqual(body["model"], server.MODEL)
+        self.assertNotIn("assets", body)
+
+
 class TestProtocol(unittest.TestCase):
     def _serve(self, *msgs):
         out = io.StringIO()
@@ -205,7 +288,8 @@ class TestProtocol(unittest.TestCase):
         self.assertEqual(text, server.INSTRUCTIONS)
         for clause in ("MUST call mcp__jev-decide__decide FIRST", "10+ items",
                        "pasted or inline list", "ToolSearch select:mcp__jev-decide__decide",
-                       "plan mode", "fewer than 10 items", "Never use it to write"):
+                       "plan mode", "fewer than 10 items", "Never use it to write",
+                       "kind `box`", "`image_file`", "images switch"):
             self.assertIn(clause, text)
 
     def test_errors_are_tool_errors_not_crashes(self):

@@ -39,21 +39,28 @@ class TypeSafeError(Exception):
 _DAEMON_TIMED_OUT = object()
 
 
-def call_jev(api_key, state, questions, timeout=DEFAULT_TIMEOUT):
+def call_jev(api_key, state, questions, timeout=DEFAULT_TIMEOUT, model=None, assets=None):
     """POST one evaluation request. Returns (response_dict, latency_ms).
 
     Raises TypeSafeError (or a urllib/socket error) on any failure; callers
-    are expected to catch broadly and fail open.
+    are expected to catch broadly and fail open. `assets` carries images
+    (TypeSafe's preview feature), which the API only accepts with its
+    danger-zone header set.
     """
-    body = json.dumps({"state": state, "model": MODEL, "questions": questions}).encode("utf-8")
+    request = {"state": state, "model": model or MODEL, "questions": questions}
+    headers = {
+        "Authorization": "Bearer %s" % api_key,
+        "Content-Type": "application/json",
+    }
+    if assets:
+        request["assets"] = assets
+        headers["TypeSafe-Danger-Zone-Images"] = "true"
+    body = json.dumps(request).encode("utf-8")
     req = urllib.request.Request(
         API_URL,
         data=body,
         method="POST",
-        headers={
-            "Authorization": "Bearer %s" % api_key,
-            "Content-Type": "application/json",
-        },
+        headers=headers,
     )
     start = time.monotonic()
     try:
@@ -143,7 +150,10 @@ def ask(body, timeout_s=DEFAULT_TIMEOUT, windows=None):
     On Windows the daemon step is skipped outright (see _ask_via_daemon), so
     every judgement is the direct HTTPS call.
     """
-    via_daemon = _ask_via_daemon(body, timeout_s, windows=windows)
+    # The warm daemon never sends the danger-zone images header, so an image
+    # request goes direct: correctness over the daemon's saved handshake.
+    via_daemon = None if body.get("assets") \
+        else _ask_via_daemon(body, timeout_s, windows=windows)
     if via_daemon is _DAEMON_TIMED_OUT:
         raise TypeSafeError("timed out after %ss (via daemon)" % timeout_s)
     if via_daemon is not None:
@@ -157,7 +167,9 @@ def ask(body, timeout_s=DEFAULT_TIMEOUT, windows=None):
         # on a round trip and was logged as an HTTP 401 from TypeSafe.
         raise TypeSafeError("no API key (%s not found)" % keyfile.ENV_VAR)
     try:
-        response, latency_ms = call_jev(api_key, body.get("state"), body.get("questions"), timeout=timeout_s)
+        response, latency_ms = call_jev(api_key, body.get("state"), body.get("questions"),
+                                        timeout=timeout_s, model=body.get("model"),
+                                        assets=body.get("assets"))
     except Exception as exc:
         metrics.record_call("direct", False, n_questions=len(body.get("questions") or []), error=exc)
         raise
