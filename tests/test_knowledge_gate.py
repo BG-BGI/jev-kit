@@ -69,6 +69,37 @@ class JudgeTests(unittest.TestCase):
                                    "scope", "promote"})
         self.assertEqual(set(qs["bucket"]["criteria"]), set(config.BUCKETS))
 
+    def test_self_report_gets_the_actionable_store_question(self):
+        c = Candidate("decision", "chose sqlite over postgres: no daemon", source="self_report",
+                      rejected_alternatives=("postgres",))
+        ask = fake(answers(bucket="decision"))
+        gate.judge(c, [], ask=ask)
+        self.assertEqual(ask.calls[0][0]["questions"]["store"]["instructions"],
+                         gate.STORE_SELF_REPORT)
+
+    def test_hook_candidates_keep_the_strict_store_question(self):
+        for source in ("hook", "explicit"):
+            c = Candidate("danger", "denied: rm -rf", tool="Bash", source=source)
+            ask = fake(answers(bucket="danger"))
+            gate.judge(c, [], ask=ask)
+            self.assertEqual(ask.calls[0][0]["questions"]["store"]["instructions"],
+                             gate.QUESTIONS["store"], source)
+
+    def test_below_bar_row_logs_the_store_probability(self):
+        gate.judge(self.c, [], ask=fake(answers(store=0.6)))
+        self.assertEqual(self.actions(), ["gate_below_bar"])
+        self.assertEqual(self.log.call_args.kwargs["store_p"], 0.6)
+        self.assertEqual(self.log.call_args.kwargs["error"], "below_bar:store")
+
+    def test_verdict_row_logs_the_store_probability(self):
+        gate.judge(self.c, [], ask=fake(answers(store=0.97)))
+        self.assertEqual(self.log.call_args.kwargs["store_p"], 0.97)
+
+    def test_missing_store_answer_logs_no_probability(self):
+        self.assertIsNone(gate._store_p({"answers": {}}))
+        self.assertIsNone(gate._store_p(None))
+        self.assertIsNone(gate._store_p({"answers": {"store": {"noul": "n/a"}}}))
+
     def test_redacts_candidate_and_neighbours(self):
         secret = "ghp_" + "a" * 30
         c = Candidate("failure", "auth failed with %s" % secret)

@@ -89,7 +89,19 @@ what one question costs:
 
 Answers act only at the kit's shared 0.8/0.4 bar. Below the bar the candidate
 is dropped and counted, so the drop rate is still a tunable number without a
-rehearsal mode.
+rehearsal mode. Every gate row in `knowledge.jsonl` and `metrics.db` carries
+`store_p`, the raw `store` probability, so a drop shows which side of the bar
+it sat on.
+
+The `store` wording depends on who wrote the candidate. A hook-born candidate
+gets the strict form above. A self-report gets a form that asks whether a
+later reader could look the fact up and act on it, because the strict form
+left every real self-report between 0.56 and 0.73, under the bar.
+
+Replayed on 13 real self-reports, the actionable form scored 0.84 to 0.96 on
+twelve and 0.77 on one. On 20 noise candidates it admitted none. Hook
+candidates keep the strict form, because airlock denials score up to 0.79
+under the other.
 
 **Stage 3, the node is written, still inline.** Jev never writes prose; that
 rule already ships in the decide server's instructions. Jev is the gate and
