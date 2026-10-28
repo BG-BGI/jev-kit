@@ -34,6 +34,18 @@ PROMPT_CHARS = 1500
 MAX_PROMPT_CANDIDATES = 12
 LOG_NAME = "knowledge.jsonl"
 
+# A self-report is the model's own choice to log, and the server already
+# refuses a decision without rejected alternatives, so the question can ask
+# what a reader could act on instead of hunting for noise. Replayed on 13
+# real self-reports the strict wording scored 0.56-0.73, under the 0.8 bar
+# every time, while this one scored 0.84-0.96 on 12 and 0.77 on one; on 20
+# noise candidates it admitted none. Hook-born candidates keep the strict
+# wording: airlock denials hedge up to 0.79 under this one.
+STORE_SELF_REPORT = ("Does the candidate record a specific, reusable engineering fact, decision or "
+                     "failure cause that someone working on this codebase later could look up and "
+                     "act on? Answer no only for chatter, status updates, or things true of every "
+                     "project.")
+
 NOVELTY = ("duplicate", "refines", "contradicts", "new")
 SCOPE_LEVELS = ("repo", "machine", "global")
 DURABILITY_LEVELS = ["this session only", "this repo", "indefinitely"]
@@ -115,6 +127,15 @@ def _usage(response):
     return usage if isinstance(usage, dict) else None
 
 
+def _store_p(response):
+    """The raw `store` probability, logged on every row so a below-bar drop
+    shows which side of the bar it sat on. None when the answer is missing."""
+    try:
+        return round(float(response["answers"]["store"]["noul"]), 3)
+    except (TypeError, KeyError, ValueError):
+        return None
+
+
 # --- answer reading --------------------------------------------------------
 
 def _margin(probabilities):
@@ -171,8 +192,9 @@ def _context(c, neighbours):
 def build(c, neighbours):
     """The TypeSafe request body for one candidate. Redacts every string."""
     neighbours = list(neighbours or [])[:3]
+    store_question = STORE_SELF_REPORT if c.source == "self_report" else QUESTIONS["store"]
     qs = {
-        "store": {"type": "noul", "instructions": QUESTIONS["store"]},
+        "store": {"type": "noul", "instructions": store_question},
         "bucket": {"type": "choice", "instructions": QUESTIONS["bucket"],
                    "criteria": {b: BUCKET_HELP[b] for b in config.BUCKETS}},
         "novelty": {"type": "choice", "instructions": QUESTIONS["novelty"],
@@ -270,7 +292,8 @@ def judge(c, neighbours, ask=None, timeout_s=None):
         verdict, reason = read((response or {}).get("answers") or {}, c, neighbours)
     except Exception as exc:
         verdict, reason = None, "read:%s" % type(exc).__name__
-    fields = dict(base, latency_ms=latency_ms, usage=_usage(response))
+    fields = dict(base, latency_ms=latency_ms, usage=_usage(response),
+                  store_p=_store_p(response))
     if verdict is None:
         log_event("gate_below_bar", error=reason, **fields)
         return None
